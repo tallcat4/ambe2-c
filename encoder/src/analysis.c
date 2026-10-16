@@ -115,7 +115,7 @@ void analyse_frame(const real *x, frame_an *a, real *acc, int first) {
 void band_of_harmonics(real f0, int L, int *band) {
     real bk[9];
     int k, l;
-    for (k = 0; k < 9; k++) bk[k] = (real)floor((double)(((real)k - (real)0.25) / (16 * f0)));
+    for (k = 0; k < 9; k++) bk[k] = R_FLOOR(((real)k - (real)0.25) / (16 * f0));
     for (l = 1; l <= L; l++) {
         int c = 0;
         for (k = 0; k < 9; k++) c += (real)l > bk[k];
@@ -129,17 +129,30 @@ static real interp(const real *x, real pos) {
     real fr;
     if (pos < 0) pos = 0;
     if (pos > (real)(NB - 1.001)) pos = (real)(NB - 1.001);
-    i0 = (int)floor((double)pos);
+    i0 = (int)pos;   /* pos >= 0: truncation = floor */
     fr = pos - (real)i0;
     return x[i0] * (1 - fr) + x[i0 + 1] * fr;
 }
 
-/* round half to even (numpy rint) */
+/* round half to even (numpy rint), for 0 <= v < 2^31 */
 static real rint_even(real v) {
-    real f = (real)floor((double)v), d = v - f;
+    long i = (long)v;
+    real f = (real)i, d = v - f;
     if (d > (real)0.5) return f + 1;
     if (d < (real)0.5) return f;
-    return fmod((double)f, 2.0) == 0 ? f : f + 1;
+    return (i & 1) ? f + 1 : f;
+}
+
+/* sum of the squared amplitude window (computed once; the same summation as per frame before) */
+static real amp_window_energy(void) {
+    static real w2 = 0;   /* a race between encoders only computes the same value twice */
+    if (w2 == 0) {
+        real s = 0;
+        int m;
+        for (m = 0; m < 400; m++) s += T_AMP_WINDOW[m] * T_AMP_WINDOW[m];
+        w2 = s;
+    }
+    return w2;
 }
 
 void voicing_frame(const frame_an *a, int b0, real *x, real *raw) {
@@ -165,7 +178,7 @@ void voicing_frame(const frame_an *a, int b0, real *x, real *raw) {
         if (h < 1 || h > L) continue;
         k = band[hi - 1];
         for (s = 0; s < 2; s++) tot[s][k] += a->S[1 + s][m];
-        if ((real)fabs((double)((real)m - h * f0 * NFFT)) <= (real)1.5)
+        if (R_FABS((real)m - h * f0 * NFFT) <= (real)1.5)
             for (s = 0; s < 2; s++) nr[s][k] += a->S[1 + s][m];
     }
     for (s = 0; s < 2; s++)
@@ -178,7 +191,7 @@ void voicing_frame(const frame_an *a, int b0, real *x, real *raw) {
     bem /= 8;
     for (k = 0; k < 8; k++) x[n++] = be[k] - bem;
     for (m = 0; m < NB; m++) sum0 += a->S[0][m];
-    for (m = 0; m < 400; m++) win2 += T_AMP_WINDOW[m] * T_AMP_WINDOW[m];
+    win2 = amp_window_energy();
     x[n++] = (real)0.5 * fast_log2(sum0 / win2 + 1);
     for (k = 0; k < 4; k++) x[n++] = a->lvl[k];
     for (lmax = a->logits[0], k = 1; k < NCAND; k++)
@@ -228,13 +241,13 @@ void harmonic_amplitudes(const real *P, real w0, int L, const real *v, real *y) 
         if (lo < 0) lo = 0;
         if (hi > NB) hi = NB;
         for (m = lo; m < hi; m++) {
-            real d = (real)fabs((double)((real)m * 2 * (real)3.141592653589793 / NFFT / w0 - (real)l));
+            real d = R_FABS((real)m * 2 * (real)3.141592653589793 / NFFT / w0 - (real)l);
             if (d < (real)0.5 - 15 * bw) En += P[m];
-            else if (d < (real)0.5 + 15 * bw) En += P[m] / (1 + (real)exp((double)(-((real)0.5 - d) / bw)));
+            else if (d < (real)0.5 + 15 * bw) En += P[m] / (1 + R_EXP(-((real)0.5 - d) / bw));
         }
         xt = w0 * (real)l / (real)3.141592653589793;
         xt = (xt < 0 ? 0 : xt > 1 ? 1 : xt) * (nt - 1);
-        i0 = (int)floor((double)xt);
+        i0 = (int)xt;   /* xt >= 0 */
         if (i0 > nt - 2) i0 = nt - 2;
         fr = xt - (real)i0;
         tv = T_AMP_TAB_V[i0] * (1 - fr) + T_AMP_TAB_V[i0 + 1] * fr;

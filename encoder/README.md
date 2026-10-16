@@ -7,19 +7,29 @@ AMBE-3000R（ThumbDV, rate 34 = 2450 bps, FEC なし）とビット互換のフ�
   （30 問中 18 問正解、p = 0.18）。
   - 聞き手が分かった数少ない手がかりは、チップ側の音の引っかかりでした。
   - チップ自身の符号化→復号との mel スペクトル距離は、日本語 2.68〜2.82 dB、英語 2.53〜2.67 dB です。
-- **軽さ**：
-  - 1 フレーム（20 ms）あたり約 25 万演算です。Apple M5 で 39 µs（実時間の約 510 倍）、float 版は 43 µs です。
-    研究段階の Rust 版エンコーダ（約 400 µs）の約 10 倍の速さです。
-  - 動的メモリ確保はありません。状態は double 版 62 KB、float 版 31 KB、定数表は約 90 KB です。
-- **依存**：C99 と libm（`floor`、`exp`、`frexp`、`fabs`、`fmod`）だけです。
+- **3 つの版**（同じアルゴリズム、同じ API）：
+
+  | 版 | ビルド | 用途 | 状態 | Apple M5 |
+  |---|---|---|---|---|
+  | double | `make` | 基準。numpy の参照実装とビット単位で一致 | 62 KB | 36 µs／フレーム |
+  | float | `make CFLAGS="-O2 -DAMBE_ENC_FLOAT"` | 単精度 FPU 向け（double の演算・libm 呼び出しなし） | 31 KB | 36 µs |
+  | **固定小数点** | `make FIXED=1` | **MCU 向けの本命**。整数演算のみ（浮動小数点・除算・libm なし） | **13 KB** | **18 µs** |
+
+  - 固定小数点版は、チップの復号音との mel 距離で float 版との差が 0.01 dB 以内です（240 発話）。出力はどの CPU でもビット単位で同じです。
+  - 実機（MCU）での速さは下の「MCU での実測」を見てください（Cortex-M7 400 MHz で CPU の約 8%、ESP32 240 MHz で約 26%）。
+  - 動的メモリ確保はありません。
+- **依存**：C99 だけです（double・float 版は libm の `floor`、`exp`、`frexp`、`fabs`、`fmod` も使います）。
 
 ## ビルド
 ```
 make            # libambeenc.a、wav2ambe、テスト用プログラム
 make test       # 同梱の音声で、参照実装（numpy）の出力とビット単位で一致するか確認し、速度を表示
 make CFLAGS="-O2 -DAMBE_ENC_FLOAT"    # float 版（単精度 FPU の MCU 向け）
+make FIXED=1    # 固定小数点版（make test FIXED=1 で、その期待値とのビット一致を確認）
 ```
-ソースは `src/*.c` だけです。自分のビルドに `src/*.c` と `include/` を加えても使えます。
+自分のビルドに加えるソースは、`include/` と次のどちらかです。
+- double / float 版：`src/encoder.c analysis.c quant.c fft.c enc_tables.c`
+- 固定小数点版：`src/fx_encoder.c fx_analysis.c fx_quant.c fx_dsp.c fx_tables.c`（`-DAMBE_ENC_FIXED` は不要です）
 
 ## 使い方
 ### コマンドライン
@@ -34,7 +44,7 @@ make CFLAGS="-O2 -DAMBE_ENC_FLOAT"    # float 版（単精度 FPU の MCU 向け
 ### C API（`include/ambe_enc.h`）
 ```c
 #include "ambe_enc.h"
-static double mem[70000 / sizeof(double)];       /* ambe_enc_size() 以上、double の境界に揃える */
+static double mem[70000 / sizeof(double)];       /* ambe_enc_size() 以上（固定小数点版は 14 KB で足りる）、8 バイト境界 */
 ambe_encoder *enc = ambe_enc_init(mem);           /* 呼び出し側のメモリに置く（malloc 不要） */
 ambe_enc_set_background(enc, 1);                  /* 任意：背景雑音モード（ECMODE 0x0800 相当、既定はオフ） */
 uint8_t frame[7];
@@ -53,13 +63,69 @@ ambe_enc_background_frame(gain, frame);           /* 背景雑音（b0 = 124）�
 ## 仕組み
 1 フレームにつき、過去の入力の 512 点パワースペクトルを 4 本だけ計算し、すべての段で使い回します。
 4 本の窓は、振幅解析用の学習済み 400 タップ窓と、200・256・384 サンプルのハン窓です。
-- **ピッチ（b0）**：120 候補それぞれについて、各スペクトルの調波の位置にあるエネルギーの割合と、対数スペクトル上での盛り上がりを求めます。1/2・2・2/3・3/2 倍の周期のものも使います。線形の採点で 16 候補に絞り、小さな MLP（隠れ層 48）で採点し、1 フレーム先読みの Viterbi（L1 距離変換）で決めます。
+- **ピッチ（b0）**：120 候補それぞれについて、各スペクトルの調波の位置にあるエネルギーの割合と、対数スペクトル上での盛り上がりを求めます。1/2・2・2/3・3/2 倍の周期のものも使います。線形の採点で 8 候補に絞り（16 候補と品質は同じでした）、小さな MLP（隠れ層 48）で採点し、1 フレーム先読みの Viterbi（L1 距離変換）で決めます。
 - **有声/無声（b1）**：帯域ごとの調波の山谷比、調波付近のエネルギーの割合、帯域エネルギー、雑音フロアからの高さ、ピッチの確からしさを求めます。フレーム t−2・t−1・t（確定ピッチ）と t+1（その時点の暫定ピッチ）を並べ、小さな MLP（約 1.1 万パラメータ）で 32 符号から選びます。
 - **振幅**：同じスペクトルから調波ごとの帯域エネルギーを求め、学習済みのレベル補正をかけます。
 - **量子化**：仕様どおりです（予測係数 0.65 の閉ループ、ゲイン・PRBA・HOC の最近傍探索）。仕様テーブルは、チップの実測で 4 か所修正したものを使っています。
 
 定数（モデルの重みを含む）は `src/enc_tables.c` にあります。研究用リポジトリ neural-ambe2 の学習結果（`lite/models.json`、`ambe2450/tables.json`）から、そちらの `ambe-enc/tools/gen_tables.py` で生成したものです。
 numpy の参照実装は neural-ambe2 の `lite/lite_encoder.py` です。C 版とはビット単位で一致します。float 版は 20000 フレーム中 99.9% のフレームが一致し、違いはほぼ同点の箇所で生じる数フレームの揺れです。
+
+## 固定小数点版（MCU 向け）
+`src/fx_*.c` です。double 版と同じ処理を、整数演算だけで書いています。浮動小数点と libm は使いません。除算はフレームあたり数十回だけで、ビンごとのループにはありません。
+- **数値の形式**：
+  - スペクトルは log2(P + 1) を Q8 の int16 で持ちます。線形のパワーが要るところは表引きの exp2 で戻します（誤差 0.3%）。
+  - FFT は 32 ビットです。入力の大きさから桁を決めるので、段ごとのスケーリングなしであふれません。回転因子は Q15 です。
+  - MLP は 12 ビットの重み（行ごとのスケール）と Q8 の入力で、累算は 32 ビットであふれないことを保証しています。
+  - 量子化器は log2 領域の Q16 です。
+- **CPU ごとの最適化**（結果はどれもビット単位で同じ）：
+  - ARM の DSP 拡張（Cortex-M4/M7/M33）では、16 ビット 2 並列の積和命令（SMLAD）を使います。
+  - 32×32→64 ビットの掛け算命令がない Cortex-M0/M0+ では、32 ビットの掛け算 2 回で同じ値を計算します。
+  - CLZ 命令がない CPU では、表引きで代わりにします。
+- 定数表（`src/fx_tables.c`、約 70 KB）は、研究用リポジトリの `ambe-enc/tools/gen_fx_tables.py` で作ります。
+- テスト用の期待値（`tests/vectors/*.fixed.*`）は固定小数点版自身の出力です。各 MCU で同じビット列が出ることを確かめるのに使います。
+
+### MCU での実測
+同梱の雑音入りの音声（247 フレーム）を符号化し、出力が期待値とビット単位で一致すること、1 フレーム（20 ms）あたりの時間を測りました。デコーダ（`../decoder`、blip25c）も同時に測っています。
+
+**実機**（サイクルカウンタで実測。どれも全フレームが期待値と一致）：
+
+| ボード | 版 | エンコード | デコード（rate 34／rate 33） | エンコード＋デコード |
+|---|---|---|---|---|
+| Arduino Portenta H7（Cortex-M7, 400 MHz） | 固定小数点 | 64 万サイクル = 1.6 ms（8%） | 0.78 ms／0.82 ms | 約 2.4 ms（12%） |
+| 同上 | float | 139 万サイクル = 3.5 ms（17%） | — | — |
+| ESP32-WROOM-32（240 MHz）、コードと表を RAM に配置 | 固定小数点 | 127 万サイクル = 5.3 ms（26%） | 1.9 ms／2.0 ms | 約 7.3 ms（1 コアの 36%） |
+| 同上、フラッシュのまま | 固定小数点 | 366 万サイクル = 15.3 ms（76%） | 2.9 ms／3.1 ms | 約 18 ms（実用外） |
+| 同上、フラッシュのまま | float | 430 万サイクル = 17.9 ms（90%） | — | — |
+
+- 背景雑音モードでは、エンコードが 3〜7% 重くなります。
+- **ESP32 ではコードと定数表を RAM に置いてください**。フラッシュのままでは、キャッシュ（32 KB）に収まらず約 3 倍遅くなります。
+  - ESP-IDF では、リンカ設定（`examples/esp32/main/ambe_enc_ram.lf` のような `noflash` 指定）だけで、ソースを変えずに置けます。
+  - 固定小数点版の表は約 70 KB で収まります。float 版は約 18 万バイトで、ESP32 の DRAM に収まりません。
+- ESP32 はデュアルコアなので、エンコーダとデコーダを別のコアで動かすこともできます。
+
+**エミュレータ**（QEMU、実行命令数。サイクル数ではありません。どれも全フレームが期待値と一致）：
+
+| CPU | 命令数／フレーム（固定小数点版） |
+|---|---|
+| Cortex-M4 / M7 | 約 63 万 |
+| Cortex-M3 | 約 74 万 |
+| RISC-V RV32IMC（FPU なし） | 約 98 万 |
+| ESP32 / ESP32-S3（Xtensa） | 約 100 万 |
+| Cortex-M0 | 約 161 万（48 MHz 級の M0 では実時間に届きません） |
+
+### テストの動かし方（`tests/mcu/`）
+共通のテスト本体は `mcu_test.c`（エンコーダ）と `dec_test.c`（デコーダ）です。各環境の実行スクリプトがビルド・書き込み・結果の表示までします。
+```
+tests/mcu/arm/run_arm.sh m0|m3|m4|m7 fixed|float|double          # QEMU の MPS2 ボード（arm-none-eabi-gcc と qemu-system-arm）
+tests/mcu/riscv/run_riscv.sh rv32imc fixed                        # QEMU の virt ボード（riscv32 の gcc と qemu-system-riscv32）
+tests/mcu/run_esp.sh esp32|esp32s3|esp32c3 fixed|float            # ESP-IDF＋Espressif QEMU（examples/esp32 のアプリ）
+ESPPORT=/dev/cu.usbserial-XXXX AMBE_ENC_RAM=1 tests/mcu/run_esp.sh esp32 fixed     # ESP32 の実機（RAM 配置）
+tests/mcu/portenta/run_portenta.sh fixed|float                    # Portenta H7 の実機（arduino-cli、arduino:mbed_portenta）
+```
+- 3 つ目の引数に `-DFX_PROFILE`（ESP では `profile`）を付けると、固定小数点版の段ごとの時間も表示します。
+- QEMU の結果は命令数の目安です。キャッシュや待ちサイクルは反映されません。
+- ESP32-C3 の Espressif QEMU は、命令数を数えるモード（`-icount`）では起動しませんでした。RV32IMC の命令数は、標準 QEMU の virt ボードで測っています。
 
 ## 無音フレームの仕様（AMBE-3000R の実測）
 AMBE-3000R（ThumbDV, ファームウェア `V120.E100.XXXX.C106.G514.R009.B0010411.C0020208`）で調べた、無音に関わるフレームの扱いです。
@@ -223,6 +289,6 @@ ECMODE の 16 ビットを 1 ビットずつ立てて、無音、微小な雑音
 - `scripts/eval_vad.py`：チップとの比較
 
 ## 未対応・注意
-- `tests/vectors/` の音声は JSUT（日本語、4 発話＋ピンク雑音を加えた 1 発話の `noisy`）と LibriSpeech test-clean（英語、3 発話）からの抜粋です。利用条件はそれぞれのコーパスのライセンスに従います。
+- `tests/vectors/` の音声は JSUT（日本語、4 発話＋ピンク雑音を加えた 1 発話の `noisy`）と LibriSpeech test-clean（英語、3 発話）からの抜粋です。MCU のテストはこれをファームウェアに埋め込みます。利用条件はそれぞれのコーパスのライセンスに従います。
 - トーンと FEC（3600x2450 形式）は出力しません。無音は上記のとおりです。
 - AMBE+2 には特許があります（US 8,359,197 ほか）。

@@ -47,7 +47,24 @@ void fft_power(const real *x, int n, real *P) {
     }
 }
 
-/* log2 via exponent/mantissa split and a degree-7 minimax polynomial on [1, 2) (max error ~1e-7) */
+#ifdef AMBE_ENC_FLOAT
+/* log2 of a positive normal float: exponent from the IEEE bits, log2 of the mantissa m in
+ * [1, 2) as 2/ln2 * atanh((m - 1) / (m + 1)), series to t^9 (|t| < 0.172, error < 2e-8, below float resolution) */
+real fast_log2(real x) {
+    union { float f; uint32_t u; } v;
+    float m, t, t2;
+    int e;
+    v.f = x;
+    e = (int)((v.u >> 23) & 0xff) - 127;
+    v.u = (v.u & 0x007fffffu) | 0x3f800000u;   /* mantissa in [1, 2) */
+    m = v.f;
+    if (m > 1.41421356f) m *= 0.5f, e += 1;      /* m in [0.707, 1.414): |t| < 0.172 */
+    t = (m - 1.0f) / (m + 1.0f);
+    t2 = t * t;
+    return 2.88539008f * t * (1.0f + t2 * (1.0f / 3 + t2 * (1.0f / 5 + t2 * (1.0f / 7 + t2 * (1.0f / 9))))) + (float)e;
+}
+#else
+/* log2 via exponent/mantissa split and the atanh series on [1, 2) (max error ~1e-7) */
 real fast_log2(real x) {
     int e;
     double m = frexp((double)x, &e) * 2.0;   /* x = m * 2^(e - 1), m in [1, 2) */
@@ -56,3 +73,4 @@ real fast_log2(real x) {
     double s = t * (1.0 + t2 * (1.0 / 3 + t2 * (1.0 / 5 + t2 * (1.0 / 7 + t2 * (1.0 / 9 + t2 * (1.0 / 11 + t2 / 13))))));
     return (real)(2.8853900817779268 * s + (double)(e - 1));
 }
+#endif

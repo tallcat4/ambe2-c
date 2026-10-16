@@ -129,8 +129,8 @@ static real bg_mlp(const real *x, const real (*W1)[T_BG_IN], const real *B1, con
 }
 
 static int round_even(real x) {   /* numpy rint */
-    real r = floor(x + (real)0.5);
-    if (r - x == (real)0.5 && fmod(r, 2) != 0) r -= 1;
+    real r = R_FLOOR(x + (real)0.5);
+    if (r - x == (real)0.5 && R_FMOD(r, (real)2) != 0) r -= 1;
     return (int)r;
 }
 

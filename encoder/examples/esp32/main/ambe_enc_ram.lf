@@ -1,0 +1,22 @@
+# AMBE_ENC_RAM=1: the encoder's and the decoder's code and constant tables in internal RAM (IRAM / DRAM) instead
+# of flash
+[mapping:ambe_enc_ram]
+archive: libmain.a
+entries:
+    fx_encoder (noflash)
+    fx_analysis (noflash)
+    fx_quant (noflash)
+    fx_dsp (noflash)
+    fx_tables (noflash)
+    encoder (noflash)
+    analysis (noflash)
+    quant (noflash)
+    fft (noflash)
+    enc_tables (noflash)
+    b25_dsp_a (noflash)
+    b25_dsp_b (noflash)
+    b25_decode_c (noflash)
+    b25_decode_d (noflash)
+    b25_tables (noflash)
+    b25_golay (noflash)
+    blip25 (noflash)

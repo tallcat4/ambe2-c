@@ -10,6 +10,15 @@ void q_init(q_state *s) {
     s->L = T_INIT_L;
 }
 
+/* 0.5 log2(L); the float build avoids the double libm call */
+static real half_log2(int L) {
+#ifdef AMBE_ENC_FLOAT
+    return (real)0.5 * fast_log2((real)L);
+#else
+    return (real)0.5 * (real)log2((double)L);
+#endif
+}
+
 static real mean(const real *x, int n) {
     real s = 0;
     int i;
@@ -99,7 +108,7 @@ void q_decode(const int *c, int L, const q_state *s, q_state *ns) {
     }
     interp_prev(s, L, ip);
     {
-        real mip = mean(ip, L), mtl = mean(Tl, L), lg = (real)0.5 * (real)log2((double)L);
+        real mip = mean(ip, L), mtl = mean(Tl, L), lg = half_log2(L);
         q_state t;
         memset(&t, 0, sizeof(t));
         for (k = 0; k < L; k++) t.log2m[k] = Tl[k] + T_RHO * (ip[k] - mip) + gamma - lg - mtl;
@@ -117,9 +126,9 @@ void q_quantize(const real *y, int L, const q_state *s, int *c) {
     mip = mean(ip, L);
     for (k = 0; k < L; k++) r[k] = y[k] - T_RHO * (ip[k] - mip);
     mr = mean(r, L);
-    target = mr + (real)0.5 * (real)log2((double)L) - T_GAIN_DECAY * s->gamma;
+    target = mr + half_log2(L) - T_GAIN_DECAY * s->gamma;
     for (best = (real)1e30, code = 0, i = 0; i < 32; i++) {
-        real d = (real)fabs((double)(T_DG[i] - target));
+        real d = R_FABS(T_DG[i] - target);
         if (d < best) { best = d; code = i; }
     }
     c[2] = code;

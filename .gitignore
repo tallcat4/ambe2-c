@@ -8,3 +8,9 @@ encoder/tests/*.out.ambe
 decoder/ambe2wav
 decoder/tests/run_tests
 decoder/tests/bench
+encoder/examples/esp32/build*/
+encoder/examples/esp32/build*.log
+encoder/examples/esp32/sdkconfig
+encoder/examples/esp32/sdkconfig.old
+encoder/examples/esp32/dependencies.lock
+encoder/tests/mcu/*/build/

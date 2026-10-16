@@ -12,7 +12,7 @@
 #define NSPEC 4
 #define NCAND 120
 #define NCF 8          /* comb features per candidate: (share, rise) x 4 spectra */
-#define TOPK 16
+#define TOPK 8
 #define LMAX 56
 #define VF 73          /* voicing features per frame */
 #define HIST 1024      /* past samples kept (windows reach back 472 samples from the frame start) */
