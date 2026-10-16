@@ -12,7 +12,7 @@ AMBE-3000R（ThumbDV など）とビット互換の AMBE+2 半レート（2450 b
 - mbelib・DSD の `ambe_d[49]` の並びとの相互変換も用意しています。
 - **MCU でも動きます**（実機で実測、エンコード＋デコード、20 ms のフレームあたり）：
   - Arduino Portenta H7（Cortex-M7, 400 MHz）：約 2.4 ms（CPU の 12%）
-  - ESP32-WROOM-32（240 MHz、コードと表を RAM に配置）：約 7.3 ms（1 コアの 36%）
+  - ESP32-WROOM-32（240 MHz、コードと表を RAM に配置）：約 7.4 ms（1 コアの 37%）
   - 詳細と、QEMU での Cortex-M0〜M7・RISC-V・ESP32-S3 の命令数は [`encoder/README.md`](encoder/README.md#mcu-での実測) にあります。
 - エンコーダは、AMBE-3000R の ECMODE 0x0800 と同じように、無音・背景雑音を背景雑音フレーム（b0 = 124）で送るモードも持っています（任意。チップとのフレーム判定の一致 92%）。無音フレームの仕様の実測は [`encoder/README.md`](encoder/README.md#無音フレームの仕様ambe-3000r-の実測) にあります。
 
@@ -34,7 +34,8 @@ C のアプリへの組み込み方は、それぞれの README を見てくだ�
 - 定数表とテストデータの生成スクリプト
 
 ## ライセンス・注意
-- `decoder/` は blip25-vocoder（MIT, Copyright (c) Chance Lindsey）の派生物です（`decoder/LICENSE`）。mbelib 互換 API は mbelib 1.3（ISC）のインターフェースを再現しています。
-- `encoder/` のライセンスは未定です。
-- `encoder/tests/vectors` の音声は JSUT と LibriSpeech からの抜粋です。
+- ライセンスは MIT です（[`LICENSE`](LICENSE)）。
+  - `decoder/` は blip25-vocoder（MIT, Copyright (c) Chance Lindsey）の派生物で、その著作権表示は `decoder/LICENSE` にあります。
+  - mbelib 互換 API は mbelib 1.3（ISC）のインターフェースを再現しています（許諾表示は `decoder/include/mbelib.h`）。
+- テスト用の音声と、それを符号化したフレーム列（`encoder/tests/vectors`、`decoder/tests/vectors`）は、LibriSpeech（CC BY 4.0、V. Panayotov ほか、LibriVox の朗読から作成）の抜粋からだけ作っています。
 - AMBE+2 には特許があります（US 8,359,197 ほか）。blip25-vocoder の合成部はリファレンス実装の逆解析に基づいています。
