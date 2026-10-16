@@ -82,9 +82,15 @@ static void pitch_logits(frame_an *a) {
     }
 }
 
+/* oldest / newest analysed sample of a frame, relative to its start (all spectrum windows) */
+#define SPAN_LO (-472)
+#define SPAN_HI (-8)
+
 void analyse_frame(const real *x, frame_an *a, real *acc, int first) {
     real lv220;
     int k;
+    a->silent = 1;   /* the AMBE-3000R codes a constant (DC-free: zero) input as its silence frame */
+    for (k = SPAN_LO + 1; k < SPAN_HI && a->silent; k++) a->silent = x[k] == x[SPAN_LO];
     windowed_power(x + T_SPEC_CENTER[0] - 200, T_AMP_WINDOW, 400, a->S[0]);
     windowed_power(x + T_SPEC_CENTER[1] - 100, T_HANN200, 200, a->S[1]);
     windowed_power(x + T_SPEC_CENTER[2] - 128, T_HANN256, 256, a->S[2]);

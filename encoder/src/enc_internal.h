@@ -39,6 +39,7 @@ typedef struct {
     real logits[NCAND];  /* pitch logits (higher = more likely; non-candidates -1e4) */
     real lv;             /* level (pitch level window) */
     real lvl[4];         /* level features */
+    int silent;          /* every analysed sample has the same value (digital silence or DC) */
 } frame_an;
 
 void analyse_frame(const real *x, frame_an *a, real *level_acc, int first);

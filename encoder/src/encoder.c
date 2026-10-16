@@ -72,13 +72,28 @@ static int classify(const ambe_encoder *e, const real *next) {
     return voicing_classify((const real(*)[VF])r);
 }
 
+/* Digital silence, as the AMBE-3000R codes it: b0 = 119, b1 = 16 (all unvoiced) and a flat, very low amplitude
+ * target, so the gain goes to its minimum (b2 = 0) and b3..b8 are whatever the closed-loop quantiser needs to cancel
+ * the prediction from the previous frames. Decodes to exact zero. */
+#define SILENCE_LOG2 ((real)-20)
+
 static void finish(ambe_encoder *e, const frame_an *a, int b0, int b1, uint8_t out[7]) {
-    int l56 = b1 >= 18 && b1 <= 31, L = l56 ? T_L56_L : T_L[b0], band[LMAX], c[9], l;
-    real f0 = l56 ? T_L56_F0 : T_W0[b0], v[LMAX], y[LMAX];
+    int l56, L, band[LMAX], c[9], l;
+    real f0, v[LMAX], y[LMAX];
     q_state ns;
+    if (a->silent) {
+        b0 = 119;
+        b1 = 16;
+    }
+    l56 = b1 >= 18 && b1 <= 31;
+    L = l56 ? T_L56_L : T_L[b0];
+    f0 = l56 ? T_L56_F0 : T_W0[b0];
     band_of_harmonics(f0, L, band);
     for (l = 0; l < L; l++) v[l] = T_VUV[b1][band[l]];
-    harmonic_amplitudes(a->S[0], 2 * (real)3.141592653589793 * f0, L, v, y);
+    if (a->silent)
+        for (l = 0; l < L; l++) y[l] = SILENCE_LOG2;
+    else
+        harmonic_amplitudes(a->S[0], 2 * (real)3.141592653589793 * f0, L, v, y);
     q_quantize(y, L, &e->q, c);
     c[0] = b0;
     c[1] = b1;
@@ -154,4 +169,14 @@ int ambe_enc_flush(ambe_encoder *e, uint8_t out[7]) {
 void ambe_enc_to_ambe_d(const uint8_t frame[7], uint8_t bits[49]) {
     int i;
     for (i = 0; i < 49; i++) bits[T_RAW_TO_AMBE_D[i]] = (uint8_t)((frame[i >> 3] >> (7 - (i & 7))) & 1);
+}
+
+const uint8_t AMBE_ENC_DMR_SILENCE_RATE34[7] = {0xf7, 0x4a, 0xd8, 0x09, 0x26, 0xb4, 0x00};
+const uint8_t AMBE_ENC_DMR_SILENCE_AMBE_D[7] = {0xf8, 0x01, 0xa9, 0x9f, 0x8c, 0xe0, 0x80};
+const uint8_t AMBE_ENC_DMR_SILENCE_RATE33[9] = {0xb9, 0xe8, 0x81, 0x52, 0x61, 0x73, 0x00, 0x2a, 0x6b};
+
+void ambe_enc_background_frame(int gain, uint8_t out[7]) {
+    int c[9] = {124, 16, 0, 52, 79, 18, 14, 12, 1};
+    c[2] = gain < 0 ? 0 : gain > 31 ? 31 : gain;
+    q_pack(c, out);
 }

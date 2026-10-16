@@ -31,6 +31,21 @@ int ambe_enc_push(ambe_encoder *enc, const int16_t pcm[160], uint8_t out[7]);
 /* end of stream: returns 1 and writes the last frame, 0 if nothing is pending. Re-init before reuse. */
 int ambe_enc_flush(ambe_encoder *enc, uint8_t out[7]);
 
+/* ---- silence / background-noise frames (see README, "無音フレームの仕様")
+ * The encoder itself codes digital silence (any constant input) the way the AMBE-3000R does with its default
+ * settings: b0 = 119, b1 = 16, b2 = 0, which decodes to exact zero. The frames below are for applications that
+ * want the special b0 = 124 frames instead (the AMBE-3000R decoder plays b0 in {124, 125} with b1 in 16..23 as
+ * background noise whose level is set by b2; it never emits them with default settings). */
+
+/* The DMR silence frame (b0..b8 = 124 16 1 52 79 18 14 12 1; about -136 dBFS on the AMBE-3000R decoder). */
+extern const uint8_t AMBE_ENC_DMR_SILENCE_RATE34[7];   /* f7 4a d8 09 26 b4 00 */
+extern const uint8_t AMBE_ENC_DMR_SILENCE_AMBE_D[7];   /* f8 01 a9 9f 8c e0 80 (mbelib / DSD order) */
+extern const uint8_t AMBE_ENC_DMR_SILENCE_RATE33[9];   /* b9 e8 81 52 61 73 00 2a 6b (3600x2450 with FEC) */
+
+/* A background-noise frame of level `gain` (b2 = 0..31; 0 = exact silence, 1 ~ -136 dBFS, 2 ~ -96, 16 ~ -79,
+ * 31 ~ -58 dBFS on the AMBE-3000R decoder) with the DMR silence frame's spectral shape. Rate-34 order. */
+void ambe_enc_background_frame(int gain, uint8_t out[7]);
+
 /* 7-byte rate-34 frame -> 49 bits (one per byte) in ambe_d order (mbelib / DSD / blip25c) */
 void ambe_enc_to_ambe_d(const uint8_t frame[7], uint8_t bits[49]);
 
