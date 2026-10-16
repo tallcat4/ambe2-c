@@ -1,12 +1,14 @@
 # decoder（blip25c）— blip25-vocoder の AMBE+2 半レート・デコーダの C 移植
 
+> このページのコマンドは `decoder/` ディレクトリで実行します。
+
 [blip25-vocoder](https://github.com/OpenBLIP25/blip25-vocoder)（Rust, MIT）の AMBE+2 2450 bps デコーダを、
 C99 にビット単位で一致するよう移植したものです。mbelib と同じ名前・引数の関数も用意しているので、
 mbelib を使っている C のアプリは、ヘッダとライブラリを差し替えるだけで移行できます。
 
 - **音質**：blip25 の合成は、リファレンス実装の固定小数点版の移植です。AMBE-3000R チップ自身の復号音との差（mel スペクトル距離）は 0.77 dB で、無声フレームはサンプル単位で一致します。mbelib は 5.7 dB です。
 - **軽さ**：整数演算のみで、動的メモリ確保も libm も使いません。デコーダ 1 つあたりの状態は約 2.5 KB、コードと定数表は約 77 KB（-Os）です。速度は Apple M5 で 1 フレーム 9.8 µs（実時間の約 2000 倍）で、Rust 版と同じです。
-  MCU の実機では、Cortex-M7（400 MHz）で 0.81 ms、ESP32（240 MHz、コードと表を RAM に配置）で 2.0 ms です（rate 34。rate 33 はわずかに重い）。どちらも出力はホストとビット単位で一致しました（[`../encoder/README.md`](../encoder/README.md#mcu-での実測)）。
+  MCU の実機では、Cortex-M7（400 MHz）で 0.81 ms、ESP32（240 MHz、コードと表を RAM に配置）で 2.0 ms です（rate 34。rate 33 はわずかに重い）。どちらも出力はホストとビット単位で一致しました（[エンコーダのマニュアル](encoder.md#mcu-での実測)）。
 - **対応する形式**：AMBE+2 の半レートだけです。
   - 2450 bps（FEC なし 49 ビット）
   - 3600x2450 bps（FEC 付き 72 ビット、硬判定・軟判定）
@@ -25,7 +27,7 @@ make test       # 同梱のテストデータで blip25-vocoder（Rust）との�
 ./ambe2wav in.ambe out.wav            # 7 バイト／20 ms のフレーム列（AMBE-3000R rate 34 の並び）→ 8 kHz WAV
 ./ambe2wav in.ambe out.wav --ambe-d   # ambe_d 順（mbelib / DSD / .amb）のフレーム列
 ```
-エンコーダ [`../encoder`](../encoder/README.md) の `wav2ambe` と組み合わせると、C だけで符号化から復号まで試せます。
+エンコーダ([マニュアル](encoder.md))の `wav2ambe` と組み合わせると、C だけで符号化から復号まで試せます。
 
 ### mbelib からの移行
 `#include <mbelib.h>` を、このリポジトリの `include/mbelib.h` に向け、`libmbe` の代わりに `libblip25.a` をリンクします。
@@ -98,7 +100,7 @@ rate 33 の並びはチップで確認しました。同じ音声を rate 33 と
 
 ## 移植の方法
 `src/b25_dsp_a.c`、`b25_dsp_b.c`、`b25_decode_c.c`、`b25_decode_d.c` は、blip25-vocoder の `src/engine/dsp.rs` と
-`decode.rs` を 1 関数ずつ C に置き換えたものです。規則は `PORTING.md` に書いてあります（生成スクリプトは neural-ambe2 の `blip25c/tools/`）。
+`decode.rs` を 1 関数ずつ C に置き換えたものです。規則は [porting.md](porting.md) に書いてあります（生成スクリプトは neural-ambe2 の `blip25c/tools/`）。
 - Rust の `wrapping_*` は、`src/b25_internal.h` の補助関数で、C の未定義動作なしに再現しています。
 - 関数のプロトタイプは `tools/gen_protos.py` で Rust のシグネチャから生成しています。
 - 定数表は `tools/gen_tables.py`、Golay の表は `tools/gen_golay.py` で生成しています。

@@ -37,7 +37,7 @@ int ambe_enc_flush(ambe_encoder *enc, uint8_t out[7]);
  * the chip's own ECMODE 0x0800 output; they agree with its frame decisions about 92% of the time. */
 void ambe_enc_set_background(ambe_encoder *enc, int on);
 
-/* ---- silence / background-noise frames (see README, "無音フレームの仕様")
+/* ---- silence / background-noise frames (see docs/encoder.md, "無音フレームの仕様")
  * The encoder itself codes digital silence (any constant input) the way the AMBE-3000R does with its default
  * settings: b0 = 119, b1 = 16, b2 = 0, which decodes to exact zero. The frames below are for applications that
  * want the special b0 = 124 frames instead (the AMBE-3000R decoder plays b0 in {124, 125} with b1 in 16..23 as

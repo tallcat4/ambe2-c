@@ -107,7 +107,7 @@ static void finish(ambe_encoder *e, const frame_an *a, int b0, int b1, uint8_t o
     e->q = ns;
 }
 
-/* ---- background-noise mode: the AMBE-3000R's ECMODE 0x0800 (see README). A VAD trained on the chip's own decisions
+/* ---- background-noise mode: the AMBE-3000R's ECMODE 0x0800 (see docs/encoder.md). A VAD trained on the chip's own decisions
  * replaces non-speech frames with b0 = 124, b1 = 16 frames: b2 = background level, b3..b8 = its spectral shape
  * quantised on a 15-harmonic grid with the predictor switched off. Such frames leave the quantiser state untouched. */
 static real bg_mlp(const real *x, const real (*W1)[T_BG_IN], const real *B1, const real (*W2)[T_BG_HIDDEN],

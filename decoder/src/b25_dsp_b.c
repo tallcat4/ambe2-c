@@ -1,4 +1,4 @@
-/* C port of blip25-vocoder engine/dsp.rs, lines 2208-end (part dsp_b). Bit-exact translation; see PORTING.md. */
+/* C port of blip25-vocoder engine/dsp.rs, lines 2208-end (part dsp_b). Bit-exact translation; see docs/porting.md. */
 #include "b25_internal.h"
 
 /* ======================= from l1_batch1 ======================= */

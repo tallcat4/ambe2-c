@@ -1,41 +1,41 @@
-# ambe2-c — AMBE+2 2450 bps エンコーダとデコーダ（純 C）
+# ambe2-c
 
-AMBE-3000R（ThumbDV など）とビット互換の AMBE+2 半レート（2450 bps）コーデックを、C99 だけで実装したものです。
+AMBE+2 半レート(2450 bps)のエンコーダとデコーダを、C99 だけで実装したものです。AMBE-3000R(ThumbDV など)とビット互換のフレームを扱います。
 
-| | ディレクトリ | 中身 | 品質 | 速度（Apple M5、1 フレーム 20 ms あたり） |
-|---|---|---|---|---|
-| **エンコーダ** | [`encoder/`](encoder/README.md) | オリジナル実装（AMBE-3000R の出力を教師に学習した解析＋仕様どおりの量子化）。double / float / 固定小数点（整数のみ）の 3 版 | 日本語の ABX テストで、チップのエンコーダと聞き分けられず（30 問中 18 問、p = 0.18） | 固定小数点版 18 µs（約 1100 倍速）、double 版 36 µs、malloc なし |
-| **デコーダ** | [`decoder/`](decoder/README.md) | blip25-vocoder（Rust, MIT）の C 移植。Rust 版とビット一致、mbelib 互換の関数と軟判定つき | チップの復号音との差 0.77 dB（mbelib は 5.7 dB） | 9.8 µs（約 2000 倍速）、整数演算のみ |
+## 主な機能
 
-- フレームの形式は AMBE-3000R の rate 34（49 ビット / 7 バイト、FEC なし）です。
-- デコーダは rate 33（3600x2450、FEC 付き 72 ビット）にも、硬判定・軟判定の両方で対応しています。
-- mbelib・DSD の `ambe_d[49]` の並びとの相互変換も用意しています。
-- **MCU でも動きます**（実機で実測、エンコード＋デコード、20 ms のフレームあたり）：
-  - Arduino Portenta H7（Cortex-M7, 400 MHz）：約 2.4 ms（CPU の 12%）
-  - ESP32-WROOM-32（240 MHz、コードと表を RAM に配置）：約 7.4 ms（1 コアの 37%）
-  - 詳細と、QEMU での Cortex-M0〜M7・RISC-V・ESP32-S3 の命令数は [`encoder/README.md`](encoder/README.md#mcu-での実測) にあります。
-- エンコーダは、AMBE-3000R の ECMODE 0x0800 と同じように、無音・背景雑音を背景雑音フレーム（b0 = 124）で送るモードも持っています（任意。チップとのフレーム判定の一致 92%）。無音フレームの仕様の実測は [`encoder/README.md`](encoder/README.md#無音フレームの仕様ambe-3000r-の実測) にあります。
+- **オリジナルのエンコーダ** — 日本語の ABX テストで、AMBE-3000R のエンコーダと聞き分けられませんでした(30 問中 18 問、p = 0.18)。
+- **ビット一致のデコーダ** — blip25-vocoder(Rust)の移植。チップの復号音との差 0.77 dB(mbelib は 5.7 dB)。mbelib 互換の関数と軟判定つき。
+- **マイコンで動く** — エンコードとデコードを同時に動かして、Portenta H7 で CPU の 12%、ESP32-WROOM-32 で 1 コアの 37%。
+- **固定小数点版** — エンコーダは整数演算だけの版もあり、どの CPU でも同じビット列を出します。
+- **背景雑音モード** — 無音・背景雑音を背景雑音フレームで送る、AMBE-3000R の ECMODE 0x0800 相当のモード。
+- **依存なし** — malloc なし、外部ライブラリなし。
 
+## 動作環境
+
+- C99 のコンパイラ(macOS / Linux で `cc`、ESP-IDF、Arduino で確認)
+
+## ビルド
+
+```bash
+make             # encoder/wav2ambe、decoder/ambe2wav、ライブラリ
+make FIXED=1     # エンコーダを固定小数点版で(MCU 向け)
+make test        # 参照実装とのビット一致と速度
 ```
-make            # encoder/libambeenc.a, encoder/wav2ambe, decoder/libblip25.a, decoder/ambe2wav
-make FIXED=1    # エンコーダを固定小数点版で（MCU 向け、整数演算のみ）
-make test       # 両方のテスト（参照実装とのビット一致）と速度
-./encoder/wav2ambe in.wav out.ambe       # 8 kHz モノラル WAV → 7 バイト／20 ms のフレーム列
-./encoder/wav2ambe in.wav out.ambe --background   # 無音・背景雑音を背景雑音フレームで送る
-./decoder/ambe2wav out.ambe out.wav      # フレーム列 → 8 kHz WAV
+
+## 使い方
+
+```bash
+encoder/wav2ambe in.wav out.ambe       # 8 kHz・モノラルの WAV → 7 バイト/20 ms のフレーム列(AMBE-3000R rate 34)
+decoder/ambe2wav out.ambe out.wav      # フレーム列 → WAV
 ```
-C のアプリへの組み込み方は、それぞれの README を見てください。mbelib を使っているアプリは、`decoder/include/mbelib.h` と `libblip25.a` に差し替えるだけで移行できます。
 
-## 経緯
-開発と研究は、別のリポジトリ（neural-ambe2）で行いました。
-- AMBE-3000R の計測と教師データの収集
-- 学習（Python）と Rust 版の試作
-- 試聴テスト
-- 定数表とテストデータの生成スクリプト
+C の API、mbelib からの移行、マイコンでの実測、無音フレームの仕様は、[エンコーダ](docs/encoder.md) と [デコーダ](docs/decoder.md) のマニュアルを参照してください。
 
-## ライセンス・注意
-- ライセンスは MIT です（[`LICENSE`](LICENSE)）。
-  - `decoder/` は blip25-vocoder（MIT, Copyright (c) Chance Lindsey）の派生物で、その著作権表示は `decoder/LICENSE` にあります。
-  - mbelib 互換 API は mbelib 1.3（ISC）のインターフェースを再現しています（許諾表示は `decoder/include/mbelib.h`）。
-- テスト用の音声と、それを符号化したフレーム列（`encoder/tests/vectors`、`decoder/tests/vectors`）は、LibriSpeech（CC BY 4.0、V. Panayotov ほか、LibriVox の朗読から作成）の抜粋からだけ作っています。
-- AMBE+2 には特許があります（US 8,359,197 ほか）。blip25-vocoder の合成部はリファレンス実装の逆解析に基づいています。
+## ライセンス
+
+MIT。詳細は [`LICENSE`](LICENSE) を参照してください。
+
+- `decoder/` は blip25-vocoder(MIT、Chance Lindsey)の派生物です([`decoder/LICENSE`](decoder/LICENSE))。mbelib 互換 API は mbelib 1.3(ISC)のインターフェースを再現しています(許諾表示は `decoder/include/mbelib.h`)。
+- テスト用の音声は LibriSpeech(CC BY 4.0)の抜粋です。
+- AMBE+2 には特許があります(US 8,359,197 ほか)。
