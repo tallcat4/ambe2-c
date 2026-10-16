@@ -1,13 +1,21 @@
-/* wav2ambe in.wav out.ambe [--no-normalize]
+/* wav2ambe in.wav out.ambe [--no-normalize] [--background]
  * 8 kHz mono 16-bit PCM WAV -> 7-byte AMBE-3000R rate-34 frames. By default the input is scaled to an active speech
  * level of -26 dBFS (the level the encoder was trained at); resample other formats first, e.g.
- *   sox in.wav -r 8000 -c 1 -b 16 in8k.wav      or      ffmpeg -i in.wav -ar 8000 -ac 1 in8k.wav */
+ *   sox in.wav -r 8000 -c 1 -b 16 in8k.wav      or      ffmpeg -i in.wav -ar 8000 -ac 1 in8k.wav
+ * --background: send silence / background noise as b0 = 124 background-noise frames (as ECMODE 0x0800). */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "ambe_enc.h"
+
+static int has_opt(int argc, char **argv, const char *opt) {
+    int i;
+    for (i = 3; i < argc; i++)
+        if (!strcmp(argv[i], opt)) return 1;
+    return 0;
+}
 
 static unsigned rd16(const unsigned char *p) { return p[0] | (p[1] << 8); }
 static unsigned long rd32(const unsigned char *p) { return p[0] | (p[1] << 8) | ((unsigned long)p[2] << 16) | ((unsigned long)p[3] << 24); }
@@ -20,7 +28,7 @@ int main(int argc, char **argv) {
     uint8_t fr[7];
     void *mem;
     ambe_encoder *e;
-    if (argc < 3) { fprintf(stderr, "usage: wav2ambe in.wav out.ambe [--no-normalize]\n"); return 2; }
+    if (argc < 3) { fprintf(stderr, "usage: wav2ambe in.wav out.ambe [--no-normalize] [--background]\n"); return 2; }
     if (!(f = fopen(argv[1], "rb"))) { perror(argv[1]); return 1; }
     fseek(f, 0, SEEK_END); n = ftell(f); fseek(f, 0, SEEK_SET);
     b = malloc(n);
@@ -41,7 +49,7 @@ int main(int argc, char **argv) {
         i += 8 + len + (len & 1);
     }
     if (!pcm) { fprintf(stderr, "no data chunk\n"); return 1; }
-    if (!(argc > 3 && !strcmp(argv[3], "--no-normalize"))) {   /* active level: 20 ms frames within 40 dB of the loudest */
+    if (!has_opt(argc, argv, "--no-normalize")) {   /* active level: 20 ms frames within 40 dB of the loudest */
         double top = -1e9, sum = 0, g;
         long cnt = 0;
         for (k = 0; k + 160 <= ns; k += 160) {
@@ -66,6 +74,7 @@ int main(int argc, char **argv) {
     memset(pcm + ns, 0, (k - ns) * sizeof(int16_t));
     mem = malloc(ambe_enc_size());
     e = ambe_enc_init(mem);
+    if (has_opt(argc, argv, "--background")) ambe_enc_set_background(e, 1);
     if (!(o = fopen(argv[2], "wb"))) { perror(argv[2]); return 1; }
     for (i = 0; i < k; i += 160)
         if (ambe_enc_push(e, pcm + i, fr)) fwrite(fr, 1, 7, o);

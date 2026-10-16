@@ -67,6 +67,25 @@ extern const real T_V_B1_F[32];
 extern const real T_DCTCOS[18][6][17];
 extern const real T_DCT8[8][8];
 extern const int16_t T_SPEC_CENTER[4];
+extern const real T_BG_VAD_W1_F[32][296];
+extern const real T_BG_VAD_B1_F[32];
+extern const real T_BG_VAD_W2[32][32];
+extern const real T_BG_VAD_B2[32];
+extern const real T_BG_VAD_W3[32];
+#define T_BG_VAD_B3 ((real)-0.08645913749933243)
+extern const real T_BG_GAIN_W1_F[32][296];
+extern const real T_BG_GAIN_B1_F[32];
+extern const real T_BG_GAIN_W2[32][32];
+extern const real T_BG_GAIN_B2[32];
+extern const real T_BG_GAIN_W3[32];
+#define T_BG_GAIN_B3 ((real)0.1915895640850067)
+#define T_BG_HIDDEN (32)
+#define T_BG_IN (296)
+extern const real T_BG_SHAPE[15][33];
+extern const int16_t T_BG_BANDS[17];
+#define T_BG_L (15)
+#define T_BG_START (50)
+extern const int16_t T_BG_MIN[2];
 extern const real T_TW_COS[256];
 extern const real T_TW_SIN[256];
 extern const real T_HANN200[200];

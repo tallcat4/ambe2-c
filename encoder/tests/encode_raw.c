@@ -1,6 +1,7 @@
-/* encode_raw in.pcm out.ambe : raw int16 LE 8 kHz -> 7-byte rate-34 frames (no preprocessing) */
+/* encode_raw in.pcm out.ambe [--background] : raw int16 LE 8 kHz -> 7-byte rate-34 frames (no preprocessing) */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "ambe_enc.h"
 int main(int argc, char **argv) {
     if (argc < 3) return 2;
@@ -8,6 +9,7 @@ int main(int argc, char **argv) {
     void *mem = malloc(ambe_enc_size());
     ambe_encoder *e = ambe_enc_init(mem);
     int16_t pcm[160];
+    if (argc > 3 && !strcmp(argv[3], "--background")) ambe_enc_set_background(e, 1);
     uint8_t fr[7];
     size_t n;
     while ((n = fread(pcm, 2, 160, in)) > 0) {

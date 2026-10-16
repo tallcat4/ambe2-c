@@ -23,13 +23,17 @@ tests/bench: tests/bench.c libambeenc.a
 	$(CC) $(ENC_CFLAGS) $< libambeenc.a -lm -o $@
 
 # the expected frames come from the numpy reference (lite/lite_encoder.py) at the time the tables were generated
-test: tests/encode_raw
-	@for v in ja en; do \
+test: tests/encode_raw tests/bench
+	@for v in ja en noisy; do \
 	  ./tests/encode_raw tests/vectors/$$v.pcm tests/$$v.out.ambe; \
 	  if cmp -s tests/$$v.out.ambe tests/vectors/$$v.expected.ambe; then echo "$$v: identical to the reference"; \
 	  else echo "$$v: DIFFERENT from the reference"; fi; \
+	  ./tests/encode_raw tests/vectors/$$v.pcm tests/$$v.bg.out.ambe --background; \
+	  if cmp -s tests/$$v.bg.out.ambe tests/vectors/$$v.background.expected.ambe; then echo "$$v --background: identical to the reference"; \
+	  else echo "$$v --background: DIFFERENT from the reference"; fi; \
 	done
 	@./tests/bench tests/vectors/ja.pcm
+	@./tests/bench tests/vectors/ja.pcm --background
 
 clean:
 	rm -f $(OBJ) libambeenc.a wav2ambe tests/encode_raw tests/bench tests/*.out.ambe

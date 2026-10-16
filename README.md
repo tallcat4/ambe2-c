@@ -10,11 +10,13 @@ AMBE-3000R（ThumbDV など）とビット互換の AMBE+2 半レート（2450 b
 - フレームの形式は AMBE-3000R の rate 34（49 ビット / 7 バイト、FEC なし）です。
 - デコーダは rate 33（3600x2450、FEC 付き 72 ビット）にも、硬判定・軟判定の両方で対応しています。
 - mbelib・DSD の `ambe_d[49]` の並びとの相互変換も用意しています。
+- エンコーダは、AMBE-3000R の ECMODE 0x0800 と同じように、無音・背景雑音を背景雑音フレーム（b0 = 124）で送るモードも持っています（任意。チップとのフレーム判定の一致 92%）。無音フレームの仕様の実測は [`encoder/README.md`](encoder/README.md#無音フレームの仕様ambe-3000r-の実測) にあります。
 
 ```
 make            # encoder/libambeenc.a, encoder/wav2ambe, decoder/libblip25.a, decoder/ambe2wav
 make test       # 両方のテスト（参照実装とのビット一致）と速度
 ./encoder/wav2ambe in.wav out.ambe       # 8 kHz モノラル WAV → 7 バイト／20 ms のフレーム列
+./encoder/wav2ambe in.wav out.ambe --background   # 無音・背景雑音を背景雑音フレームで送る
 ./decoder/ambe2wav out.ambe out.wav      # フレーム列 → 8 kHz WAV
 ```
 C のアプリへの組み込み方は、それぞれの README を見てください。mbelib を使っているアプリは、`decoder/include/mbelib.h` と `libblip25.a` に差し替えるだけで移行できます。

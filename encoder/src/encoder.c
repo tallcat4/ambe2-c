@@ -1,4 +1,5 @@
 /* Streaming encoder: mirrors lite/lite_encoder.py encode() one 20 ms chunk at a time. */
+#include <math.h>
 #include <string.h>
 
 #include "ambe_enc.h"
@@ -17,6 +18,12 @@ struct ambe_encoder {
     real rows[3][VF];         /* decided rows of the last three frames (oldest first) */
     int nrows;
     q_state q;
+    /* background-noise mode (ambe_enc_set_background) */
+    int bg_on;
+    long dec_t;               /* index of the next frame to be decided */
+    real lvl_hist[51];        /* lvl0 of the last decided frames (newest last) */
+    int nlvl;
+    real band_prev[16];       /* band log energies of the previous decided frame */
 };
 
 unsigned long ambe_enc_size(void) { return (unsigned long)sizeof(ambe_encoder); }
@@ -61,15 +68,13 @@ static void push_decided(ambe_encoder *e, const real *row) {
     memcpy(e->rows[e->nrows++], row, sizeof(e->rows[0]));
 }
 
-/* b1 of the newest decided frame from rows t-2, t-1, t (clamped to the first frame) and `next` */
-static int classify(const ambe_encoder *e, const real *next) {
-    real r[4][VF];
+/* context of the newest decided frame: rows t-2, t-1, t (clamped to the first frame) and `next` */
+static void context(const ambe_encoder *e, const real *next, real r[4][VF]) {
     int n = e->nrows;
     memcpy(r[0], e->rows[n >= 3 ? n - 3 : 0], sizeof(r[0]));
     memcpy(r[1], e->rows[n >= 2 ? n - 2 : 0], sizeof(r[1]));
     memcpy(r[2], e->rows[n - 1], sizeof(r[2]));
     memcpy(r[3], next, sizeof(r[3]));
-    return voicing_classify((const real(*)[VF])r);
 }
 
 /* Digital silence, as the AMBE-3000R codes it: b0 = 119, b1 = 16 (all unvoiced) and a flat, very low amplitude
@@ -102,6 +107,81 @@ static void finish(ambe_encoder *e, const frame_an *a, int b0, int b1, uint8_t o
     e->q = ns;
 }
 
+/* ---- background-noise mode: the AMBE-3000R's ECMODE 0x0800 (see README). A VAD trained on the chip's own decisions
+ * replaces non-speech frames with b0 = 124, b1 = 16 frames: b2 = background level, b3..b8 = its spectral shape
+ * quantised on a 15-harmonic grid with the predictor switched off. Such frames leave the quantiser state untouched. */
+static real bg_mlp(const real *x, const real (*W1)[T_BG_IN], const real *B1, const real (*W2)[T_BG_HIDDEN],
+                   const real *B2, const real *W3, real b3) {
+    real h1[T_BG_HIDDEN], h2[T_BG_HIDDEN], o = b3;
+    int i, j;
+    for (j = 0; j < T_BG_HIDDEN; j++) {
+        real h = B1[j];
+        for (i = 0; i < T_BG_IN; i++) h += W1[j][i] * x[i];
+        h1[j] = h > 0 ? h : 0;
+    }
+    for (j = 0; j < T_BG_HIDDEN; j++) {
+        real h = B2[j];
+        for (i = 0; i < T_BG_HIDDEN; i++) h += W2[j][i] * h1[i];
+        h2[j] = h > 0 ? h : 0;
+    }
+    for (i = 0; i < T_BG_HIDDEN; i++) o += W3[i] * h2[i];
+    return o;
+}
+
+static int round_even(real x) {   /* numpy rint */
+    real r = floor(x + (real)0.5);
+    if (r - x == (real)0.5 && fmod(r, 2) != 0) r -= 1;
+    return (int)r;
+}
+
+/* decide whether the newest decided frame (analysis a, context r) is background; if so write its frame */
+static int background(ambe_encoder *e, const frame_an *a, const real r[4][VF], uint8_t out[7]) {
+    real x[T_BG_IN], band[32], env[T_BG_L], mean = 0, mn;
+    int i, j, k, c[9], isbg = 0;
+    q_state z;
+    if (e->nlvl == 51) memmove(e->lvl_hist, e->lvl_hist + 1, 50 * sizeof(real)), e->nlvl = 50;
+    e->lvl_hist[e->nlvl++] = r[2][48];                     /* lvl0 */
+    for (i = 0; i < 16; i++) {
+        real s = 0;
+        for (k = T_BG_BANDS[i]; k < T_BG_BANDS[i + 1]; k++) s += a->S[0][k];
+        band[i] = (real)3.0102999566398120 * fast_log2(s / (T_BG_BANDS[i + 1] - T_BG_BANDS[i]) + 1);
+        mean += band[i];
+    }
+    for (i = 0; i < 16; i++) band[i] -= mean / 16;
+    memcpy(band + 16, e->dec_t ? e->band_prev : band, 16 * sizeof(real));
+    memcpy(e->band_prev, band, 16 * sizeof(real));
+    if (e->bg_on) {
+        for (i = 0; i < 4; i++) memcpy(x + i * VF, r[i], VF * sizeof(real));
+        for (j = 0; j < 2; j++) {
+            mn = e->lvl_hist[e->nlvl - 1];
+            for (i = 1; i <= T_BG_MIN[j] && i <= e->nlvl - 1; i++)
+                if (e->lvl_hist[e->nlvl - 1 - i] < mn) mn = e->lvl_hist[e->nlvl - 1 - i];
+            x[4 * VF + j] = mn;
+        }
+        x[4 * VF + 2] = e->dec_t >= T_BG_START ? 1 : (real)e->dec_t / T_BG_START;
+        x[4 * VF + 3] = e->dec_t < T_BG_START / 2;
+        isbg = bg_mlp(x, T_BG_VAD_W1_F, T_BG_VAD_B1_F, T_BG_VAD_W2, T_BG_VAD_B2, T_BG_VAD_W3, T_BG_VAD_B3) > 0;
+    }
+    e->dec_t++;
+    if (!isbg) return 0;
+    for (i = 0; i < T_BG_L; i++) {
+        real v = T_BG_SHAPE[i][32];
+        for (k = 0; k < 32; k++) v += T_BG_SHAPE[i][k] * band[k];
+        env[i] = v / (real)6.0205999132796240;              /* dB -> log2 amplitude */
+    }
+    memset(&z, 0, sizeof(z));
+    z.L = T_BG_L;
+    q_quantize(env, T_BG_L, &z, c);   /* b3..b8; b2 is the level below */
+    c[0] = 124;
+    c[1] = 16;
+    c[2] = round_even(bg_mlp(x, T_BG_GAIN_W1_F, T_BG_GAIN_B1_F, T_BG_GAIN_W2, T_BG_GAIN_B2, T_BG_GAIN_W3, T_BG_GAIN_B3));
+    c[2] = c[2] < 0 ? 0 : c[2] > 31 ? 31 : c[2];
+    q_pack(c, out);
+    return 1;
+}
+
+void ambe_enc_set_background(ambe_encoder *e, int on) { e->bg_on = on != 0; }
+
 static int argmin(const real *x, int n) {
     int i, b = 0;
     for (i = 1; i < n; i++)
@@ -110,7 +190,7 @@ static int argmin(const real *x, int n) {
 }
 
 int ambe_enc_push(ambe_encoder *e, const int16_t pcm[160], uint8_t out[7]) {
-    real S[NCAND], f[NCAND], m, x[VF], raw[9], row[VF], next[VF];
+    real S[NCAND], f[NCAND], m, x[VF], raw[9], row[VF], next[VF], r[4][VF];
     int arg[NCAND], j, b0, prov, b1;
     memmove(e->hist, e->hist + N, (HIST - N) * sizeof(real));
     for (j = 0; j < N; j++) e->hist[HIST - N + j] = pcm[j];
@@ -147,21 +227,23 @@ int ambe_enc_push(ambe_encoder *e, const int16_t pcm[160], uint8_t out[7]) {
     /* newest frame at its provisional pitch: the lookahead row */
     voicing_frame(&e->an[1], prov, e->prov_x, e->prov_raw);
     row_of(e, e->prov_x, e->prov_raw, next);
-    b1 = classify(e, next);
+    context(e, next, r);
+    b1 = voicing_classify((const real(*)[VF])r);
     e->prov = prov;
-    finish(e, &e->an[0], b0, b1, out);
+    if (!background(e, &e->an[0], (const real(*)[VF])r, out)) finish(e, &e->an[0], b0, b1, out);
     return 1;
 }
 
 int ambe_enc_flush(ambe_encoder *e, uint8_t out[7]) {
-    real row[VF];
+    real row[VF], r[4][VF];
     int b1;
     if (e->t == 0) return 0;
     row_of(e, e->prov_x, e->prov_raw, row);
     update_floor(e, e->prov_raw);
     push_decided(e, row);
-    b1 = classify(e, row);
-    finish(e, &e->an[1], e->prov, b1, out);
+    context(e, row, r);
+    b1 = voicing_classify((const real(*)[VF])r);
+    if (!background(e, &e->an[1], (const real(*)[VF])r, out)) finish(e, &e->an[1], e->prov, b1, out);
     e->t = 0;
     return 1;
 }

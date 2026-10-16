@@ -31,6 +31,12 @@ int ambe_enc_push(ambe_encoder *enc, const int16_t pcm[160], uint8_t out[7]);
 /* end of stream: returns 1 and writes the last frame, 0 if nothing is pending. Re-init before reuse. */
 int ambe_enc_flush(ambe_encoder *enc, uint8_t out[7]);
 
+/* Background-noise mode (off by default; call right after ambe_enc_init): like the AMBE-3000R with ECMODE 0x0800,
+ * frames that a VAD takes for silence or background noise are sent as b0 = 124 background-noise frames (b2 = noise
+ * level, b3..b8 = its spectral shape) instead of speech frames. The VAD and the level / shape models were trained on
+ * the chip's own ECMODE 0x0800 output; they agree with its frame decisions about 92% of the time. */
+void ambe_enc_set_background(ambe_encoder *enc, int on);
+
 /* ---- silence / background-noise frames (see README, "無音フレームの仕様")
  * The encoder itself codes digital silence (any constant input) the way the AMBE-3000R does with its default
  * settings: b0 = 119, b1 = 16, b2 = 0, which decodes to exact zero. The frames below are for applications that
