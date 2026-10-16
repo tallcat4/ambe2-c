@@ -1,0 +1,10 @@
+*.o
+*.a
+*.dSYM/
+encoder/wav2ambe
+encoder/tests/encode_raw
+encoder/tests/bench
+encoder/tests/*.out.ambe
+decoder/ambe2wav
+decoder/tests/run_tests
+decoder/tests/bench
