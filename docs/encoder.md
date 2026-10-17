@@ -32,13 +32,15 @@ make FIXED=1    # 固定小数点版（make test FIXED=1 で、その期待値�
 自分のビルドに加えるソースは、`include/` と次のどちらかです。
 - double / float 版：`src/encoder.c analysis.c quant.c fft.c enc_tables.c`
 - 固定小数点版：`src/fx_encoder.c fx_analysis.c fx_quant.c fx_dsp.c fx_tables.c`（`-DAMBE_ENC_FIXED` は不要です）
+- FEC（rate 33）を使うときは、どちらの版にも `src/fec.c` を加えます。
 
 ## 使い方
 ### コマンドライン
 ```
 ./wav2ambe in.wav out.ambe                   # 8 kHz・モノラル・16 ビットの WAV → 7 バイト／20 ms のフレーム列
 ./wav2ambe in.wav out.ambe --background      # 無音・背景雑音を背景雑音フレーム（b0 = 124）で送る（ECMODE 0x0800 相当）
-../decoder/ambe2wav out.ambe out.wav         # 復号して聴く（decoder）
+./wav2ambe in.wav out.ambe --fec             # FEC 付きの 9 バイト／20 ms のフレーム列（AMBE-3000R rate 33）
+../decoder/ambe2wav out.ambe out.wav         # 復号して聴く（decoder。--fec で作ったものは --rate33 を付ける）
 ```
 入力は 8 kHz・モノラル・16 ビットの WAV です。それ以外は、先に `sox in.wav -r 8000 -c 1 -b 16 in8k.wav` などで変換してください。
 既定では、有音部の平均レベルを −26 dBFS（学習時のレベル）に合わせてから符号化します。合わせたくない場合は `--no-normalize` を付けます。
@@ -54,6 +56,8 @@ if (ambe_enc_push(enc, pcm160, frame)) { /* 1 フレームできた（ひとつ�
 if (ambe_enc_flush(enc, frame)) { /* ストリームの最後のフレーム */ }
 ambe_enc_to_ambe_d(frame, bits49);                /* mbelib / DSD / blip25c の ambe_d 順が欲しいとき */
 ambe_enc_background_frame(gain, frame);           /* 背景雑音（b0 = 124）フレーム。gain = 1 で DMR の無音フレーム */
+ambe_enc_to_rate33(frame, frame9);                /* FEC をかけて 9 バイトの rate 33（3600x2450）に */
+ambe_enc_bits_to_rate33(bits49, frame9);          /* ambe_d 順の 49 ビットから rate 33 に */
 ```
 - 入力は 8 kHz・int16・160 サンプルずつです。
 - 出力は AMBE-3000R の rate 34 と同じビット順の 7 バイトです（`blip25_decode_2450_thumbdv` でそのまま復号できます）。
@@ -61,6 +65,23 @@ ambe_enc_background_frame(gain, frame);           /* 背景雑音（b0 = 124）�
 - 解析窓は過去側にあり、遅延はチップ自身とほぼ同じです。
 - 学習時の入力レベルは −26 dBFS 前後です。極端に小さい・大きい入力は、合わせてから渡してください。
 - 1 つの `ambe_encoder` は 1 本のストリーム専用です。
+
+### FEC（rate 33、`src/fec.c`）
+`ambe_enc_to_rate33` は、7 バイトのフレームに AMBE-3000R の rate 33（3600x2450）と同じ FEC をかけて、9 バイトにします。デコーダの `blip25_fec_3600` のちょうど逆です。
+- 49 ビットを u0（12）・u1（12）・u2（11）・u3（14）に分けます。
+- c0 は u0 の拡張 Golay [24,12] 符号です（3 ビットまで訂正、4 ビットを検出）。
+- c1 は u1 の Golay [23,12] 符号（3 ビットまで訂正）に、u0 を種とする PN 系列を XOR したものです。
+- c2 = u2、c3 = u3 で、保護はありません。
+- 72 ビット（36 ディビット）を P25 Phase 2 の Annex S の順に並べます。
+- 整数演算だけで、3 つの版（double・float・固定小数点）で共通です。
+
+`make test` の `tests/fec_test` で、次のことを確かめています。
+- **チップとの一致**：DMR の無音フレームと、下の「無音フレームの仕様」に載せたチップの実測 4 フレームが、チップの rate 33 出力とビット単位で一致します。
+  チップの rate 33 出力（`../decoder/tests/vectors/chip3600.bin`、3059 フレーム）を FEC でほどいて符号化し直すと、すべて元と一致します。
+- **符号の性質**：u0・u1 の 4096 通りすべてで、c0・c1 の重み分布が拡張 Golay [24,12]（最小距離 8）・Golay [23,12]（最小距離 7）の理論値どおりです。
+- **誤り訂正**：40 フレームのそれぞれで、c0・c1 の 1〜3 ビット誤りのすべてのパターンを訂正し（硬判定・軟判定）、c0 の 4 ビット誤りのすべてのパターン（10626 通り）を検出します。
+  c0・c1 に同時に誤りがあっても訂正され、c2・c3 の誤りはそのまま残ります（保護なし）。
+- 72 ビット内の位置は、Annex S の表ではなく mbelib（pyambelib）の `rW/rX/rY/rZ` 表から求めています。
 
 ## 仕組み
 1 フレームにつき、過去の入力の 512 点パワースペクトルを 4 本だけ計算し、すべての段で使い回します。
@@ -292,5 +313,5 @@ ECMODE の 16 ビットを 1 ビットずつ立てて、無音、微小な雑音
 
 ## 未対応・注意
 - `tests/vectors/` の音声は LibriSpeech（CC BY 4.0）からの抜粋です。`en` は test-clean の 3 発話、`noisy` は 1 発話に白色雑音を加えたものです。MCU のテストは `noisy` をファームウェアに埋め込みます。
-- トーンと FEC（3600x2450 形式）は出力しません。無音は上記のとおりです。
+- トーンは出力しません。無音は上記のとおりです。
 - AMBE+2 には特許があります（US 8,359,197 ほか）。

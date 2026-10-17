@@ -26,6 +26,7 @@ make test       # 同梱のテストデータで blip25-vocoder（Rust）との�
 ```
 ./ambe2wav in.ambe out.wav            # 7 バイト／20 ms のフレーム列（AMBE-3000R rate 34 の並び）→ 8 kHz WAV
 ./ambe2wav in.ambe out.wav --ambe-d   # ambe_d 順（mbelib / DSD / .amb）のフレーム列
+./ambe2wav in.ambe out.wav --rate33   # 9 バイト／20 ms の FEC 付きフレーム列（AMBE-3000R rate 33、wav2ambe --fec の出力）
 ```
 エンコーダ([マニュアル](encoder.md))の `wav2ambe` と組み合わせると、C だけで符号化から復号まで試せます。
 

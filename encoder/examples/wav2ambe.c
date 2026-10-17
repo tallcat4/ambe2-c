@@ -1,14 +1,22 @@
-/* wav2ambe in.wav out.ambe [--no-normalize] [--background]
+/* wav2ambe in.wav out.ambe [--no-normalize] [--background] [--fec]
  * 8 kHz mono 16-bit PCM WAV -> 7-byte AMBE-3000R rate-34 frames. By default the input is scaled to an active speech
  * level of -26 dBFS (the level the encoder was trained at); resample other formats first, e.g.
  *   sox in.wav -r 8000 -c 1 -b 16 in8k.wav      or      ffmpeg -i in.wav -ar 8000 -ac 1 in8k.wav
- * --background: send silence / background noise as b0 = 124 background-noise frames (as ECMODE 0x0800). */
+ * --background: send silence / background noise as b0 = 124 background-noise frames (as ECMODE 0x0800).
+ * --fec: write 9-byte rate-33 frames instead (3600x2450: Golay, PN, Annex S interleave, as the chip does). */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "ambe_enc.h"
+
+static void put_frame(FILE *o, const uint8_t fr[7], int fec) {
+    uint8_t r33[9];
+    if (!fec) { fwrite(fr, 1, 7, o); return; }
+    ambe_enc_to_rate33(fr, r33);
+    fwrite(r33, 1, 9, o);
+}
 
 static int has_opt(int argc, char **argv, const char *opt) {
     int i;
@@ -25,10 +33,11 @@ int main(int argc, char **argv) {
     unsigned char *b;
     long n, i, ns = 0, k;
     int16_t *pcm = NULL;
+    int fec = has_opt(argc, argv, "--fec");
     uint8_t fr[7];
     void *mem;
     ambe_encoder *e;
-    if (argc < 3) { fprintf(stderr, "usage: wav2ambe in.wav out.ambe [--no-normalize] [--background]\n"); return 2; }
+    if (argc < 3) { fprintf(stderr, "usage: wav2ambe in.wav out.ambe [--no-normalize] [--background] [--fec]\n"); return 2; }
     if (!(f = fopen(argv[1], "rb"))) { perror(argv[1]); return 1; }
     fseek(f, 0, SEEK_END); n = ftell(f); fseek(f, 0, SEEK_SET);
     b = malloc(n);
@@ -77,8 +86,8 @@ int main(int argc, char **argv) {
     if (has_opt(argc, argv, "--background")) ambe_enc_set_background(e, 1);
     if (!(o = fopen(argv[2], "wb"))) { perror(argv[2]); return 1; }
     for (i = 0; i < k; i += 160)
-        if (ambe_enc_push(e, pcm + i, fr)) fwrite(fr, 1, 7, o);
-    if (ambe_enc_flush(e, fr)) fwrite(fr, 1, 7, o);
+        if (ambe_enc_push(e, pcm + i, fr)) put_frame(o, fr, fec);
+    if (ambe_enc_flush(e, fr)) put_frame(o, fr, fec);
     fclose(o);
     fprintf(stderr, "%ld frames -> %s\n", k / 160, argv[2]);
     return 0;

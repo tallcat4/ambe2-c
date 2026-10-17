@@ -8,6 +8,7 @@ AMBE+2 半レート(2450 bps)のエンコーダとデコーダを、C99 だけ�
 - **ビット一致のデコーダ** — blip25-vocoder(Rust)の移植。チップの復号音との差 0.77 dB(mbelib は 5.7 dB)。mbelib 互換の関数と軟判定つき。
 - **マイコンで動く** — エンコードとデコードを同時に動かして、Portenta H7 で CPU の 12%、ESP32-WROOM-32 で 1 コアの 37%。
 - **固定小数点版** — エンコーダは整数演算だけの版もあり、どの CPU でも同じビット列を出します。
+- **FEC 付きの出力** — AMBE-3000R の rate 33(3600x2450、9 バイト)と同じ FEC(Golay 符号・PN 変調・Annex S インターリーブ)をかけられます。チップの出力とビット一致。
 - **背景雑音モード** — 無音・背景雑音を背景雑音フレームで送る、AMBE-3000R の ECMODE 0x0800 相当のモード。
 - **依存なし** — malloc なし、外部ライブラリなし。
 
@@ -27,7 +28,8 @@ make test        # 参照実装とのビット一致と速度
 
 ```bash
 encoder/wav2ambe in.wav out.ambe       # 8 kHz・モノラルの WAV → 7 バイト/20 ms のフレーム列(AMBE-3000R rate 34)
-decoder/ambe2wav out.ambe out.wav      # フレーム列 → WAV
+encoder/wav2ambe in.wav out.ambe --fec # FEC 付きの 9 バイト/20 ms のフレーム列(AMBE-3000R rate 33)
+decoder/ambe2wav out.ambe out.wav      # フレーム列 → WAV(rate 33 は --rate33 を付ける)
 ```
 
 C の API、mbelib からの移行、マイコンでの実測、無音フレームの仕様は、[エンコーダ](docs/encoder.md) と [デコーダ](docs/decoder.md) のマニュアルを参照してください。

@@ -55,6 +55,16 @@ void ambe_enc_background_frame(int gain, uint8_t out[7]);
 /* 7-byte rate-34 frame -> 49 bits (one per byte) in ambe_d order (mbelib / DSD / blip25c) */
 void ambe_enc_to_ambe_d(const uint8_t frame[7], uint8_t bits[49]);
 
+/* ---- 3600x2450 FEC (AMBE-3000R rate 33; src/fec.c)
+ * Golay [24,12] on u0, Golay [23,12] with PN modulation on u1, u2 and u3 unprotected, P25 Phase 2 Annex S
+ * interleave: 72 bits = 36 dibits in 9 bytes, MSB first. The inverse of the decoder's blip25_fec_3600. */
+
+/* 7-byte rate-34 frame -> 9-byte rate-33 frame */
+void ambe_enc_to_rate33(const uint8_t frame[7], uint8_t out[9]);
+
+/* 49 bits (one per byte) in ambe_d order -> 9-byte rate-33 frame */
+void ambe_enc_bits_to_rate33(const uint8_t bits[49], uint8_t out[9]);
+
 #ifdef __cplusplus
 }
 #endif
