@@ -10,10 +10,10 @@
  * 2000 bps: the 2400 bps fields without their LSB (b1 complete); pitch and gain sit half way between the two
  *           2400 bps values, the vectors use the even 2400 bps entries.
  * 4000 bps: PRBA and gain books shared with 2400 bps, own 5-bit HOC books (fitted to the chip), six-band voicing,
- *           L up to ~3780 Hz, plus two first-half-frame refinements that stay out of the prediction memory
- *           (cf. US 6,377,916): interpolation weights (bits 38-39) and a second quantization layer (bits 40-49: gain
- *           term + VQ of DCT coefficients of the spectral error). Bits 66-78 (a further, apparently adaptive layer)
- *           are not decoded. */
+ *           L up to ~3780 Hz, plus refinements that stay out of the prediction memory (cf. US 6,377,916):
+ *           first-half-frame interpolation weights (bits 38-39) and a second quantization layer (bits 40-49: a gain
+ *           term per half-frame + VQ of DCT coefficients of the spectral error). Bits 66-78 (a further, apparently
+ *           adaptive layer) are not decoded. */
 #include "b25_internal.h"
 #include "ambeplus.h"
 
@@ -98,14 +98,16 @@ static void interp(int16_t *synth, const int16_t *cur, const int16_t *s) {
 
 /* 4000 bps second quantization layer: a gain term and DCT coefficients 1..10 of the log2 spectral error over the
  * L harmonics, added to the synthesis parameters only (not to the prediction memory) */
-static void layer2(int16_t *synth, const int16_t *s) {
+static void layer2(int16_t *params, const int16_t *s, int half) {
     static const ap_field G = {3, {40, 41, 42}}, V = {7, {43, 44, 45, 46, 47, 48, 49}};
-    int L = synth[DEC_P_L], l, k, g = field(s, &G), v = field(s, &V);
+    int L = params[DEC_P_L], l, k, g = field(s, &G), v = field(s, &V);
+    const int16_t *gain = half ? AP4_L2_GAIN_B : AP4_L2_GAIN;
+    double vq_scale = AP4_L2_SCALE[half] / 4096.0;
     for (l = 0; l < L && l < 56; l++) {
-        double d = AP4_L2_GAIN[g];
+        double d = 0;
         for (k = 1; k <= 10; k++) d += AP4_L2_VQ[10 * v + k - 1] * cos(3.14159265358979 * k * (l + 0.5) / L);
-        d *= 0.5;
-        synth[8 + l] = (int16_t)lrint(fmax(-32768.0, fmin(32767.0, synth[8 + l] + d)));
+        d = gain[g] + vq_scale * d;
+        params[8 + l] = (int16_t)lrint(fmax(-32768.0, fmin(32767.0, params[8 + l] + d)));
     }
 }
 
@@ -199,12 +201,12 @@ int16_t b25_decode_frame_ambeplus(int16_t *cur, int16_t *synth, int16_t *prev, c
 
     b25_select_repeat_params(synth, cur, prev);
     b25_copy_params_batch2(prev, cur, 0);
-    /* 4000 bps refinements of the first half-frame parameters; prev already holds the prediction memory. The second
-     * layer is applied there only, at half its measured strength: closest to the chip on speech (both halves or
-     * full strength are further away; the measured layer is probably not exact yet) */
+    /* 4000 bps refinements of the half-frame parameters; prev already holds the prediction memory. The second layer's
+     * gain terms and VQ scales per half-frame are fitted on speech (the first half-frame carries most of it) */
     if (lay == &L4000) {
         interp(synth, cur, s);
-        layer2(synth, s);
+        layer2(synth, s, 0);
+        layer2(cur, s, 1);
     }
     prev[DEC_S_TRACK] = -3;
     return 0;

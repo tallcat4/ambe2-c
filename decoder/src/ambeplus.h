@@ -17,6 +17,8 @@ extern const uint32_t AP_VOICING[16];
 extern const int16_t AP4_HOC[512];
 extern const int16_t AP4_L2_GAIN[8];
 extern const int16_t AP4_L2_VQ[1280];
+extern const int16_t AP4_L2_GAIN_B[8];
+extern const int16_t AP4_L2_SCALE[2];
 
 extern const int16_t AP4_INTERP[8];
 
