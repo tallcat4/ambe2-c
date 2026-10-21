@@ -29,7 +29,7 @@ static const struct { const char *test, *vector; unsigned long long fnv; } EXPEC
     {"apdec0", "ap_r0", 0xaf5200ce37a4deebULL},
     {"apdec22", "ap_r22", 0xaf5200ce37a4deebULL},
     {"apdec31", "ap_r31", 0x1932a489f650bcd1ULL},
-    {"apdec17", "ap_r17", 0x613f8d1383e03187ULL},
-    {"apdec26", "ap_r26", 0x613f8d1383e03187ULL},
-    {"apdec26", "ap_r26n", 0x8f9b4e4325eb2938ULL},
+    {"apdec17", "ap_r17", 0x06c3d49556e35c6aULL},
+    {"apdec26", "ap_r26", 0x06c3d49556e35c6aULL},
+    {"apdec26", "ap_r26n", 0xced9c42268baf044ULL},
 };

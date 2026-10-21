@@ -19,6 +19,7 @@ extern const int16_t AP4_L2_GAIN[8];
 extern const int16_t AP4_L2_VQ[1280];
 extern const int16_t AP4_L2_GAIN_B[8];
 extern const int16_t AP4_L2_SCALE[2];
+extern const int16_t AP4_L2X_VQ[800];
 
 extern const int16_t AP4_INTERP[8];
 
