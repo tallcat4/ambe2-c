@@ -45,6 +45,21 @@ typedef struct blip25_decoder {
 void blip25_init(blip25_decoder *dec);
 
 /* One frame from 49 bits (one bit per byte, value 0/1) in ambe_d order. status: 0..15 or BLIP25_LOST. */
+/* AMBE+ 2400 bps (AMBE-3000R rate 0 / 22, D-STAR): 48 speech bits in the chip's serial order */
+int blip25_decode_ambeplus2400(blip25_decoder *dec, const uint8_t serial[48], int status, int16_t pcm[160]);
+/* AMBE-3000R RATET 0 (2400, no FEC) and 22 (2400 + 1600 FEC): channel frames MSB first. The FEC functions return
+ * the number of channel bits the convolutional decoder corrected. */
+int blip25_decode_ambeplus_r0(blip25_decoder *dec, const uint8_t frame[6], int16_t pcm[160]);
+int blip25_decode_ambeplus_r22(blip25_decoder *dec, const uint8_t frame[10], int16_t pcm[160], int *errors);
+int blip25_decode_ambeplus_r31(blip25_decoder *dec, const uint8_t frame[5], int16_t pcm[160]);
+/* AMBE-3000R RATET 17 (4000 bps, no FEC) and 26 (4000 + 2400 FEC) */
+int blip25_decode_ambeplus4000(blip25_decoder *dec, const uint8_t serial[80], int status, int16_t pcm[160]);
+int blip25_decode_ambeplus_r17(blip25_decoder *dec, const uint8_t frame[10], int16_t pcm[160]);
+int blip25_decode_ambeplus_r26(blip25_decoder *dec, const uint8_t frame[16], int16_t pcm[160], int *errors);
+int blip25_fec_ambeplus_r26(const uint8_t frame[16], uint8_t speech[80]);
+int blip25_fec_ambeplus_r26_soft(const int8_t llr[128], uint8_t speech[80]);
+int blip25_fec_ambeplus_r22(const uint8_t frame[10], uint8_t speech[48]);
+int blip25_fec_ambeplus_r22_soft(const int8_t llr[80], uint8_t speech[48]);
 int blip25_decode_bits(blip25_decoder *dec, const uint8_t bits[49], int status, int16_t pcm[160]);
 
 /* One clean frame, 7 bytes in ambe_d order (natural / mbelib / .amb). */

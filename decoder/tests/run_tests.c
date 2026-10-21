@@ -1,5 +1,7 @@
 /* Standalone decoder tests: decode every vector in tests/vectors through the native and the mbelib-compatible API
- * and compare FNV-1a 64 hashes of the outputs with blip25-vocoder's (tests/expected.h).
+ * and compare FNV-1a 64 hashes of the outputs with the references in tests/expected.h (blip25-vocoder for the
+ * AMBE+2 rates; for the AMBE+ rates the chip's own speech bits / the Python FEC for the FEC tests, and earlier
+ * outputs of this decoder for the decode tests).
  *   run_tests [vector dir]      (default: tests/vectors) */
 #include <stdio.h>
 #include <stdlib.h>
@@ -99,6 +101,32 @@ static unsigned long long run(const char *test, const char *v) {
                 fnv_pcm(&f, pcm, 160);
             }
         }
+    } else if (!strncmp(test, "apfec", 5)) {   /* AMBE+ FEC: packed speech bits */
+        int r22 = !strcmp(test, "apfec22");
+        int nb = r22 ? 10 : 16, K = r22 ? 48 : 80;
+        fr = slurp(v, ".bin", &n);
+        for (k = 0; k < n / nb; k++) {
+            uint8_t sp[80];
+            unsigned char p[10] = {0};
+            int i;
+            if (r22) blip25_fec_ambeplus_r22(fr + nb * k, sp);
+            else blip25_fec_ambeplus_r26(fr + nb * k, sp);
+            for (i = 0; i < K; i++) p[i >> 3] |= (unsigned char)(sp[i] << (7 - (i & 7)));
+            fnv_bytes(&f, p, (size_t)(K / 8));
+        }
+    } else if (!strncmp(test, "apdec", 5)) {   /* AMBE+ decode: apdec<RATET> */
+        int rate = atoi(test + 5);
+        int nb = rate == 31 ? 5 : rate == 0 ? 6 : rate == 26 ? 16 : 10;
+        fr = slurp(v, ".bin", &n);
+        for (k = 0; k < n / nb; k++) {
+            const unsigned char *x = fr + nb * k;
+            if (rate == 31) blip25_decode_ambeplus_r31(&dec, x, pcm);
+            else if (rate == 0) blip25_decode_ambeplus_r0(&dec, x, pcm);
+            else if (rate == 22) blip25_decode_ambeplus_r22(&dec, x, pcm, NULL);
+            else if (rate == 17) blip25_decode_ambeplus_r17(&dec, x, pcm);
+            else blip25_decode_ambeplus_r26(&dec, x, pcm, NULL);
+            fnv_pcm(&f, pcm, 160);
+        }
     } else {   /* mbelib-compatible API */
         mbe_parms cur, prev, prev_enh;
         short out[160];
@@ -138,7 +166,7 @@ int main(int argc, char **argv) {
     for (i = 0; i < n; i++) {
         unsigned long long h = run(EXPECTED[i].test, EXPECTED[i].vector);
         int ok = h == EXPECTED[i].fnv;
-        printf("%-15s %-12s %s\n", EXPECTED[i].test, EXPECTED[i].vector, ok ? "identical to blip25-vocoder" : "DIFFERENT");
+        printf("%-15s %-12s %s\n", EXPECTED[i].test, EXPECTED[i].vector, ok ? "identical to reference" : "DIFFERENT");
         fails += !ok;
     }
     printf("%zu/%zu passed\n", n - fails, n);

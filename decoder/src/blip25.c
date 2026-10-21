@@ -2,6 +2,7 @@
  * formats. */
 #include "blip25.h"
 #include "b25_internal.h"
+#include "ambeplus.h"
 
 /* ---- engine driver (blip25-vocoder src/engine/mod.rs Decoder) */
 static const b25_dec_tables DEC_TABLES = {
@@ -33,6 +34,110 @@ int blip25_decode_bits(blip25_decoder *dec, const uint8_t bits[49], int status, 
     disp = b25_dec_synth(pcm, 80, dec->bits, 0, 0, 0, dec->state, &DEC_TABLES);
     b25_dec_synth(pcm + 80, 80, dec->bits, 0, 0, 1, dec->state, &DEC_TABLES);
     return (int)(uint16_t)disp;
+}
+
+static int decode_ambeplus(blip25_decoder *dec, const uint8_t *serial, int nbits, int status, int16_t rate, int16_t pcm[160]) {
+    int16_t ctrl[26] = {0};
+    int i;
+    int16_t disp;
+    if (status < 0) {
+        ctrl[0x24 / 2] = 15;
+        ctrl[0x32 / 2] = 4;
+    } else {
+        ctrl[0x24 / 2] = (int16_t)(status > 15 ? 15 : status);
+    }
+    memset(dec->bits, 0, sizeof(dec->bits));
+    for (i = 0; i < nbits; i++) dec->bits[i] = (int16_t)(serial[i] & 1);
+    b25_dec_ctrl(dec->state, ctrl);
+    disp = b25_dec_synth(pcm, 80, dec->bits, rate, 0, 0, dec->state, &DEC_TABLES);
+    b25_dec_synth(pcm + 80, 80, dec->bits, rate, 0, 1, dec->state, &DEC_TABLES);
+    return (int)(uint16_t)disp;
+}
+
+int blip25_decode_ambeplus2400(blip25_decoder *dec, const uint8_t serial[48], int status, int16_t pcm[160]) {
+    return decode_ambeplus(dec, serial, 48, status, B25_RATE_AMBEPLUS2400, pcm);
+}
+
+static void unpack_bits(const uint8_t *frame, int nbits, int16_t *soft) {
+    int i;
+    for (i = 0; i < nbits; i++) soft[i] = ((frame[i >> 3] >> (7 - (i & 7))) & 1) ? 1 : -1;
+}
+
+int blip25_decode_ambeplus_r0(blip25_decoder *dec, const uint8_t frame[6], int16_t pcm[160]) {
+    int16_t soft[48];
+    uint8_t s[48];
+    unpack_bits(frame, 48, soft);
+    ambeplus_fec_decode(soft, 48, 48, 0, s);
+    return blip25_decode_ambeplus2400(dec, s, 0, pcm);
+}
+
+/* RATET 31 (2000 bps): the 2400 bps fields without their least significant bit (b1 complete). Serial position of
+ * each 2000 bps bit in the 2400 bps frame; the dropped LSBs are 0 (pitch and gain are then placed between the two
+ * 2400 bps values by the frame decoder). */
+static const uint8_t R31_TO_2400[40] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+                                        22, 23, 24, 26, 27, 28, 30, 31, 32, 34, 35, 37, 38, 39, 40, 41, 43, 45};
+
+int blip25_decode_ambeplus_r31(blip25_decoder *dec, const uint8_t frame[5], int16_t pcm[160]) {
+    int16_t soft[40];
+    uint8_t s40[40], s[48];
+    int i;
+    unpack_bits(frame, 40, soft);
+    ambeplus_fec_decode(soft, 40, 40, 0, s40);
+    memset(s, 0, sizeof(s));
+    for (i = 0; i < 40; i++) s[R31_TO_2400[i]] = s40[i];
+    return decode_ambeplus(dec, s, 48, 0, B25_RATE_AMBEPLUS2000, pcm);
+}
+
+int blip25_decode_ambeplus4000(blip25_decoder *dec, const uint8_t serial[80], int status, int16_t pcm[160]) {
+    return decode_ambeplus(dec, serial, 80, status, B25_RATE_AMBEPLUS4000, pcm);
+}
+
+int blip25_decode_ambeplus_r17(blip25_decoder *dec, const uint8_t frame[10], int16_t pcm[160]) {
+    int16_t soft[80];
+    uint8_t s[80];
+    unpack_bits(frame, 80, soft);
+    ambeplus_fec_decode(soft, 80, 80, 0, s);
+    return decode_ambeplus(dec, s, 80, 0, B25_RATE_AMBEPLUS4000, pcm);
+}
+
+int blip25_fec_ambeplus_r26(const uint8_t frame[16], uint8_t speech[80]) {
+    int16_t soft[128];
+    unpack_bits(frame, 128, soft);
+    return ambeplus_fec_decode(soft, 128, 80, 36, speech);
+}
+
+int blip25_fec_ambeplus_r26_soft(const int8_t llr[128], uint8_t speech[80]) {
+    int16_t soft[128];
+    int i;
+    for (i = 0; i < 128; i++) soft[i] = llr[i];
+    return ambeplus_fec_decode(soft, 128, 80, 36, speech);
+}
+
+int blip25_decode_ambeplus_r26(blip25_decoder *dec, const uint8_t frame[16], int16_t pcm[160], int *errors) {
+    uint8_t s[80];
+    int e = blip25_fec_ambeplus_r26(frame, s);
+    if (errors) *errors = e;
+    return decode_ambeplus(dec, s, 80, 0, B25_RATE_AMBEPLUS4000, pcm);
+}
+
+int blip25_fec_ambeplus_r22(const uint8_t frame[10], uint8_t speech[48]) {
+    int16_t soft[80];
+    unpack_bits(frame, 80, soft);
+    return ambeplus_fec_decode(soft, 80, 48, 20, speech);
+}
+
+int blip25_fec_ambeplus_r22_soft(const int8_t llr[80], uint8_t speech[48]) {
+    int16_t soft[80];
+    int i;
+    for (i = 0; i < 80; i++) soft[i] = llr[i];
+    return ambeplus_fec_decode(soft, 80, 48, 20, speech);
+}
+
+int blip25_decode_ambeplus_r22(blip25_decoder *dec, const uint8_t frame[10], int16_t pcm[160], int *errors) {
+    uint8_t s[48];
+    int e = blip25_fec_ambeplus_r22(frame, s);
+    if (errors) *errors = e;
+    return blip25_decode_ambeplus2400(dec, s, 0, pcm);
 }
 
 int blip25_decode_2450(blip25_decoder *dec, const uint8_t frame[7], int16_t pcm[160]) {

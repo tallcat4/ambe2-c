@@ -1,7 +1,8 @@
 # AMBE_ENC_VARIANT: fixed (integer only, default), float or double; AMBE_ENC_RAM=1: encoder in internal RAM
 set(ENC ${CMAKE_CURRENT_LIST_DIR}/../../..)
 set(DEC ${ENC}/../decoder)
-set(DEC_SRCS b25_dsp_a.c b25_dsp_b.c b25_decode_c.c b25_decode_d.c b25_tables.c b25_golay.c blip25.c)
+set(DEC_SRCS b25_dsp_a.c b25_dsp_b.c b25_decode_c.c b25_decode_d.c b25_tables.c b25_golay.c blip25.c
+    ambeplus.c ambeplus_tables.c ambeplus_fec.c ambeplus4000_tables.c ambeplus_layer2.c)
 list(TRANSFORM DEC_SRCS PREPEND ${DEC}/src/)
 if(NOT DEFINED AMBE_ENC_VARIANT)
     set(AMBE_ENC_VARIANT fixed)
