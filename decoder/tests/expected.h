@@ -1,5 +1,7 @@
-/* FNV-1a 64 of blip25-vocoder 1.0 (Rust) outputs for the files in tests/vectors (mbe...: mbelib-compatible API, PCM clipped
- * to +-32760 as mbelib does). Generated in the neural-ambe2 research repository. */
+/* FNV-1a 64 of the expected outputs for the files in tests/vectors, generated in the neural-ambe2 research repository.
+ * AMBE+2 tests: blip25-vocoder 1.0 (Rust) outputs (mbe...: mbelib-compatible API, PCM clipped to +-32760 as mbelib
+ * does). AMBE+ tests (ap...): apfec = the AMBE-3000R's own FEC-less speech bits (Python Viterbi for the noisy vector),
+ * apdec = this decoder's output (regression; ambeplus/make_test_vectors.py). */
 static const struct { const char *test, *vector; unsigned long long fnv; } EXPECTED[] = {
     {"dec2450", "speech", 0xf5350e1ecbf2a13fULL},
     {"dec2450", "status", 0xd946c20fa1867c88ULL},
@@ -21,4 +23,13 @@ static const struct { const char *test, *vector; unsigned long long fnv; } EXPEC
     {"decsoft", "soft_harsh", 0xc1cc043f9610b15bULL},
     {"fecsoft", "soft_random", 0xd9b8e25549dc7590ULL},
     {"decsoft", "soft_random", 0x2ed8e0f42cbe4855ULL},
+    {"apfec22", "ap_r22", 0x0a47a017328e6135ULL},
+    {"apfec26", "ap_r26", 0x5728bb1e0fff4200ULL},
+    {"apfec26", "ap_r26n", 0xb9877118aa999225ULL},
+    {"apdec0", "ap_r0", 0xaf5200ce37a4deebULL},
+    {"apdec22", "ap_r22", 0xaf5200ce37a4deebULL},
+    {"apdec31", "ap_r31", 0x1932a489f650bcd1ULL},
+    {"apdec17", "ap_r17", 0x2ae2393f25030f2aULL},
+    {"apdec26", "ap_r26", 0x2ae2393f25030f2aULL},
+    {"apdec26", "ap_r26n", 0x3350a3f8b3ab0252ULL},
 };

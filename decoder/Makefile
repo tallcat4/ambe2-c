@@ -2,7 +2,7 @@
 CC ?= cc
 CFLAGS ?= -O2
 B25_CFLAGS = $(CFLAGS) -std=c99 -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-function -Iinclude -Isrc
-SRC = src/b25_dsp_a.c src/b25_dsp_b.c src/b25_decode_c.c src/b25_decode_d.c src/b25_tables.c src/b25_golay.c src/blip25.c src/mbelib_compat.c
+SRC = src/b25_dsp_a.c src/b25_dsp_b.c src/b25_decode_c.c src/b25_decode_d.c src/b25_tables.c src/b25_golay.c src/blip25.c src/mbelib_compat.c src/ambeplus.c src/ambeplus_tables.c src/ambeplus_fec.c src/ambeplus4000_tables.c src/ambeplus_layer2.c
 OBJ = $(SRC:.c=.o)
 
 all: libblip25.a ambe2wav tests/run_tests tests/bench
@@ -14,13 +14,13 @@ libblip25.a: $(OBJ)
 	ar rcs $@ $^
 
 ambe2wav: examples/ambe2wav.c libblip25.a
-	$(CC) $(B25_CFLAGS) $< libblip25.a -o $@
+	$(CC) $(B25_CFLAGS) $< libblip25.a -lm -o $@
 
 tests/run_tests: tests/run_tests.c tests/expected.h libblip25.a
-	$(CC) $(B25_CFLAGS) -Itests $< libblip25.a -o $@
+	$(CC) $(B25_CFLAGS) -Itests $< libblip25.a -lm -o $@
 
 tests/bench: tests/bench.c libblip25.a
-	$(CC) $(B25_CFLAGS) $< libblip25.a -o $@
+	$(CC) $(B25_CFLAGS) $< libblip25.a -lm -o $@
 
 test: tests/run_tests tests/bench
 	./tests/run_tests tests/vectors

@@ -15,7 +15,7 @@ esac
 sk=$here/build/$variant/ambe_enc_test
 rm -rf "$sk" && mkdir -p "$sk"
 cp "$here/ambe_enc_test.ino" "$here/glue.cpp" "$sk/"
-for s in $src b25_dsp_a b25_dsp_b b25_decode_c b25_decode_d b25_tables b25_golay blip25; do
+for s in $src b25_dsp_a b25_dsp_b b25_decode_c b25_decode_d b25_tables b25_golay blip25 ambeplus ambeplus_tables ambeplus_fec ambeplus4000_tables ambeplus_layer2; do
     echo "#include \"$s.c\"" >"$sk/w_$s.c"   # one translation unit per source (encoder, decoder)
 done
 printf '#define printf mcu_printf\n#include "dec_test.c"\n' >"$sk/w_dec_test.c"
