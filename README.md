@@ -53,11 +53,8 @@ decoder/ambe2wav out.ambe out.wav                # RATET 34 のフレーム列 �
 decoder/ambe2wav in.ambe out.wav --rate 26       # ほかのレート: 34、33、31、0、22、17、26(--rate33 は --rate 33 と同じ)
 ```
 
-詳しくはマニュアルを参照してください。
-
-- [エンコーダ](docs/encoder.md): C の API、FEC 付きの出力、マイコンでの実測、無音フレームの仕様
-- [デコーダ](docs/decoder.md): AMBE+2 のデコーダと、mbelib からの移行
-- [AMBE+ デコーダ](docs/ambeplus.md): AMBE+ のレートの形式と、チップから割り出したしくみ
+- [エンコーダ](docs/encoder.md)
+- [デコーダ](docs/decoder.md)
 
 ## ライセンス
 
