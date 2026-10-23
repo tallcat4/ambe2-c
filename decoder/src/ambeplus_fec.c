@@ -64,7 +64,7 @@ void ambeplus_viterbi(const int16_t *soft, int n, uint8_t *u) {
                     int bit = conv_out(reg, p);
                     if ((x > 0) != bit) m += x < 0 ? -x : x;
                 }
-                if (m < next[ns]) {
+                if (m <= next[ns]) { /* ties: the later predecessor (oldest input 1), as the chip */
                     next[ns] = m;
                     npath[ns] = t < 64 ? (path[s] | ((uint64_t)b << t)) : path[s];
                 }
