@@ -10,11 +10,19 @@ typedef float real;
 #define R_FABS fabsf
 #define R_EXP expf
 #define R_FMOD fmodf
+#define R_COS cosf
+#define R_LOG2 log2f
+#define R_EXP2 exp2f
+#define R_SQRT sqrtf
 #else
 typedef double real;
 #define R_FLOOR floor
 #define R_FABS fabs
 #define R_EXP exp
 #define R_FMOD fmod
+#define R_COS cos
+#define R_LOG2 log2
+#define R_EXP2 exp2
+#define R_SQRT sqrt
 #endif
 #endif

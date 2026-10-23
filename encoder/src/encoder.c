@@ -4,6 +4,7 @@
 
 #include "ambe_enc.h"
 #include "enc_internal.h"
+#include "ap_internal.h"
 
 struct ambe_encoder {
     real hist[HIST];          /* past input; the current chunk occupies the last N samples */
@@ -24,7 +25,24 @@ struct ambe_encoder {
     real lvl_hist[51];        /* lvl0 of the last decided frames (newest last) */
     int nlvl;
     real band_prev[16];       /* band log energies of the previous decided frame */
+    /* output format (ambe_enc_set_rate) */
+    int ratet;                /* AMBE-3000R RATET: 34 (default), 33, or an AMBE+ rate */
+    int ap_kind;              /* 0 (AMBE+2) or AP_2400 / AP_2000 / AP_4000 */
+    real ap_prev_f0;          /* AMBE+ 4000: the previous frame's pitch and whether it had a voiced band */
+    int ap_prev_voiced;
 };
+
+/* AMBE+ rates: speech bits K, channel bits, convolutionally coded bits */
+static const struct { int ratet, kind, K, nch, n; } AP_RATES[5] = {
+    {0, AP_2400, 48, 48, 0}, {22, AP_2400, 48, 80, 20}, {31, AP_2000, 40, 40, 0},
+    {17, AP_4000, 80, 80, 0}, {26, AP_4000, 80, 128, 36}};
+
+static int ap_rate_index(int ratet) {
+    int i;
+    for (i = 0; i < 5; i++)
+        if (AP_RATES[i].ratet == ratet) return i;
+    return -1;
+}
 
 unsigned long ambe_enc_size(void) { return (unsigned long)sizeof(ambe_encoder); }
 
@@ -32,7 +50,22 @@ ambe_encoder *ambe_enc_init(void *mem) {
     ambe_encoder *e = (ambe_encoder *)mem;
     memset(e, 0, sizeof(*e));
     q_init(&e->q);
+    e->ratet = 34;
     return e;
+}
+
+int ambe_enc_set_rate(ambe_encoder *e, int ratet) {
+    int i = ap_rate_index(ratet);
+    if (ratet == 34 || ratet == 33) {
+        e->ratet = ratet;
+        e->ap_kind = 0;
+        return ratet == 34 ? 7 : 9;
+    }
+    if (i < 0) return 0;
+    e->ratet = ratet;
+    e->ap_kind = AP_RATES[i].kind;
+    e->bg_on = 0;
+    return (AP_RATES[i].nch + 7) / 8;
 }
 
 /* noise floors: follow drops at once, rise by T_FLOOR_RISE per frame */
@@ -82,10 +115,16 @@ static void context(const ambe_encoder *e, const real *next, real r[4][VF]) {
  * the prediction from the previous frames. Decodes to exact zero. */
 #define SILENCE_LOG2 ((real)-20)
 
-static void finish(ambe_encoder *e, const frame_an *a, int b0, int b1, uint8_t out[7]) {
+static void ap_finish(ambe_encoder *e, const frame_an *a, int b0, int b1, uint8_t *out);
+
+static void finish(ambe_encoder *e, const frame_an *a, int b0, int b1, uint8_t *out) {
     int l56, L, band[LMAX], c[9], l;
     real f0, v[LMAX], y[LMAX];
     q_state ns;
+    if (e->ap_kind) {
+        ap_finish(e, a, b0, b1, out);
+        return;
+    }
     if (a->silent) {
         b0 = 119;
         b1 = 16;
@@ -102,8 +141,98 @@ static void finish(ambe_encoder *e, const frame_an *a, int b0, int b1, uint8_t o
     q_quantize(y, L, &e->q, c);
     c[0] = b0;
     c[1] = b1;
-    q_pack(c, out);
+    if (e->ratet == 33) {
+        uint8_t fr[7];
+        q_pack(c, fr);
+        ambe_enc_to_rate33(fr, out);
+    } else {
+        q_pack(c, out);
+    }
     q_decode(c, L, &e->q, &ns);
+    e->q = ns;
+}
+
+/* Fitted to the AMBE-3000R's own AMBE+ frames (neural-ambe2 ambeplus/eval_enc_rates.py), per AP kind: the centre of
+ * the amplitude window from the frame start (the AMBE+2 analysis uses T_SPEC_CENTER[0] = -208; at the AMBE+ rates
+ * the chip's frames come out one frame earlier, its amplitude window a little later than its pitch window) and a log2
+ * offset of the amplitudes (the chip's 4000 bps base layer is coded lower). The first half-frame target of 4000 bps
+ * is centred half a frame earlier. */
+static const int AP_AMP_CENTER[4] = {0, -258, -258, -278};
+static const real AP_GAIN_OFF[4] = {0, 0, 0, (real)-0.2};
+#define AP_HALF_OFF (-80)
+
+/* ---- AMBE+ rates: the same analysis (pitch track, voicing classes, amplitudes), AMBE+ parameters and books */
+
+/* AMBE+2 voicing class -> AMBE+ voicing field: 2400 / 2000 bps four 1 kHz band pairs (b1 bit 3 = lowest pair),
+ * 4000 bps six bands (bit 5 = lowest); also the eight-band pattern the decoder makes of it. A band is voiced when at
+ * least half of the AMBE+2 bands it holds are, the lowest one only when AMBE+2 bands 0 and 1 both are: a voiced
+ * 0-500 Hz band alone (frequent at voicing onsets and ends, often with a far too low pitch there) made a low buzz the
+ * chip does not have. */
+static int ap_voicing(int kind, int b1, real *v8) {
+    static const uint8_t SIX_OF_8[8] = {0, 1, 1, 2, 3, 4, 4, 5};
+    const real *v = T_VUV[b1];
+    int k, code = 0;
+    if (kind == AP_4000) {
+        real acc[6] = {0}, cnt[6] = {0};
+        for (k = 0; k < 8; k++) acc[SIX_OF_8[k]] += v[k], cnt[SIX_OF_8[k]] += 1;
+        for (k = 0; k < 6; k++)
+            if (k == 0 ? v[0] + v[1] >= 2 : acc[k] >= (real)0.5 * cnt[k]) code |= 1 << (5 - k);
+        for (k = 0; k < 8; k++) v8[k] = (real)((code >> (5 - SIX_OF_8[k])) & 1);
+    } else {
+        for (k = 0; k < 4; k++)
+            if (v[2 * k] + v[2 * k + 1] >= (k == 0 ? 2 : 1)) code |= 1 << (3 - k);
+        for (k = 0; k < 8; k++) v8[k] = (real)((code >> (3 - k / 2)) & 1);
+    }
+    return code;
+}
+
+
+static void ap_finish(ambe_encoder *e, const frame_an *a, int b0, int b1, uint8_t *out) {
+    const int ri = ap_rate_index(e->ratet), kind = e->ap_kind;
+    const real *x = e->hist + HIST - (a == &e->an[0] ? 2 : 1) * N;   /* start of the frame's chunk */
+    int L, band[LMAX], c[9], l;
+    real f0, v8[8], v[LMAX], y[LMAX], P[NB];
+    uint8_t serial[80];
+    q_state ns;
+    /* digital silence as the AMBE-3000R codes it at the AMBE+ rates: pitch code 34 (2000 bps: 38), all unvoiced, a
+     * flat very low amplitude target (gain code 0). The chip gives most unvoiced frames that pitch code too; so do
+     * the 2400 and 2000 bps rates here (closer to the chip there, not at 4000 bps). */
+    c[1] = ap_voicing(kind, a->silent ? 16 : b1, v8);
+    c[0] = a->silent || (c[1] == 0 && kind != AP_4000) ? (kind == AP_2000 ? 38 : 34) : ap_pitch_code(kind, T_W0[b0]);
+    f0 = ap_f0(kind, c[0]);
+    L = ap_harmonics(kind, c[0]);
+    band_of_harmonics(f0, L, band);
+    for (l = 0; l < L; l++) v[l] = v8[band[l]];
+    if (a->silent)
+        for (l = 0; l < L; l++) y[l] = SILENCE_LOG2;
+    else {
+        amp_spectrum(x, AP_AMP_CENTER[kind], P);
+        harmonic_amplitudes(P, 2 * (real)3.141592653589793 * f0, L, v, y);
+        for (l = 0; l < L; l++) y[l] += AP_GAIN_OFF[kind];
+    }
+    ap_quantize(kind, y, L, &e->q, c);
+    ap_pack(kind, c, serial);
+    ap_decode(kind, c, L, &e->q, &ns);
+    if (kind == AP_4000) {
+        int rf[7];
+        ap_refine_neutral(rf);
+        if (!a->silent) { /* split VQ against the first half-frame (between the previous frame and this one) */
+            const real f0p = e->ap_prev_f0 > 0 ? e->ap_prev_f0 : f0;
+            const real fs = ap_half_f0(f0p, e->ap_prev_voiced, f0, c[1] != 0);
+            int Ls = ap_half_harmonics(fs), band2[LMAX];
+            real th[LMAX], vh[LMAX];
+            band_of_harmonics(fs, Ls, band2);
+            for (l = 0; l < Ls; l++) vh[l] = v8[band2[l]];
+            amp_spectrum(x, AP_AMP_CENTER[kind] + AP_HALF_OFF, P);
+            harmonic_amplitudes(P, 2 * (real)3.141592653589793 * fs, Ls, vh, th);
+            for (l = 0; l < Ls; l++) th[l] += AP_GAIN_OFF[kind];
+            ap_refine(&e->q, f0p, &ns, f0, fs, th, rf);
+        }
+        ap_pack_refine(rf, serial);
+        e->ap_prev_f0 = f0;
+        e->ap_prev_voiced = c[1] != 0;
+    }
+    ap_channel_encode(serial, AP_RATES[ri].nch, AP_RATES[ri].K, AP_RATES[ri].n, out);
     e->q = ns;
 }
 
@@ -135,7 +264,7 @@ static int round_even(real x) {   /* numpy rint */
 }
 
 /* decide whether the newest decided frame (analysis a, context r) is background; if so write its frame */
-static int background(ambe_encoder *e, const frame_an *a, const real r[4][VF], uint8_t out[7]) {
+static int background(ambe_encoder *e, const frame_an *a, const real r[4][VF], uint8_t *out) {
     real x[T_BG_IN], band[32], env[T_BG_L], mean = 0, mn;
     int i, j, k, c[9], isbg = 0;
     q_state z;
@@ -176,11 +305,17 @@ static int background(ambe_encoder *e, const frame_an *a, const real r[4][VF], u
     c[1] = 16;
     c[2] = round_even(bg_mlp(x, T_BG_GAIN_W1_F, T_BG_GAIN_B1_F, T_BG_GAIN_W2, T_BG_GAIN_B2, T_BG_GAIN_W3, T_BG_GAIN_B3));
     c[2] = c[2] < 0 ? 0 : c[2] > 31 ? 31 : c[2];
-    q_pack(c, out);
+    if (e->ratet == 33) {
+        uint8_t fr[7];
+        q_pack(c, fr);
+        ambe_enc_to_rate33(fr, out);
+    } else {
+        q_pack(c, out);
+    }
     return 1;
 }
 
-void ambe_enc_set_background(ambe_encoder *e, int on) { e->bg_on = on != 0; }
+void ambe_enc_set_background(ambe_encoder *e, int on) { e->bg_on = on != 0 && !e->ap_kind; }
 
 static int argmin(const real *x, int n) {
     int i, b = 0;
@@ -189,7 +324,7 @@ static int argmin(const real *x, int n) {
     return b;
 }
 
-int ambe_enc_push(ambe_encoder *e, const int16_t pcm[160], uint8_t out[7]) {
+int ambe_enc_push(ambe_encoder *e, const int16_t pcm[160], uint8_t *out) {
     real S[NCAND], f[NCAND], m, x[VF], raw[9], row[VF], next[VF], r[4][VF];
     int arg[NCAND], j, b0, prov, b1;
     memmove(e->hist, e->hist + N, (HIST - N) * sizeof(real));
@@ -234,7 +369,7 @@ int ambe_enc_push(ambe_encoder *e, const int16_t pcm[160], uint8_t out[7]) {
     return 1;
 }
 
-int ambe_enc_flush(ambe_encoder *e, uint8_t out[7]) {
+int ambe_enc_flush(ambe_encoder *e, uint8_t *out) {
     real row[VF], r[4][VF];
     int b1;
     if (e->t == 0) return 0;

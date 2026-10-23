@@ -1,6 +1,6 @@
 # エンコーダ
 
-AMBE+2 2450 bps のエンコーダです(`encoder/`)。API は `include/ambe_enc.h` にあります。
+AMBE+2 2450 bps と AMBE+ のエンコーダです(`encoder/`)。API は `include/ambe_enc.h` にあります。
 
 ## 構成
 
@@ -11,6 +11,7 @@ AMBE+2 2450 bps のエンコーダです(`encoder/`)。API は `include/ambe_enc
 | 固定小数点 | `src/fx_*.c` | `make FIXED=1` | 18 µs/フレーム |
 
 - FEC 付き(3600x2450)の出力には、どの版でも `src/fec.c` を加えます。
+- AMBE+ のレート(`src/ap_quant.c ap_fec.c ap_tables.c`)は double 版と float 版だけです。固定小数点版の `ambe_enc_set_rate` は 34 と 33 だけを受け付けます。
 - double 版は、numpy の参照実装(neural-ambe2 の `lite/lite_encoder.py`)とビット一致します。
 - 固定小数点版の出力は、どの CPU でも同じです。音質は float 版との差が 0.01 dB 以内です。
 - 定数(学習済みのモデルを含む)は neural-ambe2 で生成しています(`ambe-enc/tools/gen_tables.py`、`gen_fx_tables.py`)。
@@ -19,6 +20,60 @@ AMBE+2 2450 bps のエンコーダです(`encoder/`)。API は `include/ambe_enc
 
 - ピッチと有声/無声は、パワースペクトルから求めた特徴量を小さな MLP で採点して決めます。ピッチは 1 フレーム先まで見るので、`ambe_enc_push` はひとつ前のフレームを返します。
 - 量子化は仕様どおりです。表は、チップで測った結果に合わせて 4 か所直しています。
+
+## AMBE+ のレート
+
+`ambe_enc_set_rate` で、AMBE-3000R の RATET を選びます。
+
+| RATET | 形式 | フレーム | Apple M5 |
+|---|---|---|---|
+| 31 | AMBE+ 2000 bps | 5 バイト | 36 µs/フレーム |
+| 0 | AMBE+ 2400 bps | 6 バイト | 36 µs/フレーム |
+| 22 | AMBE+ 4000x2400(2400 bps＋FEC) | 10 バイト | 36 µs/フレーム |
+| 17 | AMBE+ 4000 bps | 10 バイト | 43 µs/フレーム |
+| 26 | AMBE+ 6400x4000(4000 bps＋FEC) | 16 バイト | 43 µs/フレーム |
+
+```c
+#include "ambe_enc.h"
+
+static unsigned char mem[70000];               /* ambe_enc_size() バイト以上 */
+ambe_encoder *e = ambe_enc_init(mem);
+int nbytes = ambe_enc_set_rate(e, 26);         /* 16。対応していないレートなら 0 */
+uint8_t frame[AMBE_ENC_MAX_BYTES];
+if (ambe_enc_push(e, pcm160, frame)) send(frame, nbytes);   /* 20 ms ごと。最初の 1 回だけ 0 を返す */
+if (ambe_enc_flush(e, frame)) send(frame, nbytes);          /* 最後に 1 回 */
+```
+
+- `ambe_enc_set_rate` は `ambe_enc_init` の直後に呼びます。途中でレートを変えるときは、初期化し直してください。
+- 速度は `tests/bench in.pcm --rate N` で測れます。
+
+- 出力はチップのチャネルフレームそのもの(MSB から)で、`decoder/ambe2wav --rate N` やチップのデコーダにそのまま渡せます。
+- 解析(ピッチ、有声/無声、振幅)は AMBE+2 と同じものを使い、パラメータと符号帳だけを AMBE+ のものにしています(`src/ap_quant.c`)。
+  - 量子化は、ambe2-c の AMBE+ デコーダの予測を浮動小数点でなぞる閉ループです。デコーダとの差は log2 振幅で 0.033 以内です(`tests/ap_test`)。
+  - 誤り訂正とインタリーブ(`src/ap_fec.c`)は、チップのフレームとビット一致します。
+  - 符号帳はデコーダと同じ値です(neural-ambe2 の `ambeplus/gen_enc_tables.py` で生成)。
+- チップの AMBE+ のフレームに合わせて、次の点を変えています。
+  - 振幅の窓の位置を、AMBE+2 より 50〜70 サンプル前にしています。チップの AMBE+ のフレームは AMBE+2 より 1 フレーム早く出て、振幅の窓はピッチの窓より少し後ろにあるためです。このエンコーダの出力はチップより 1 フレーム遅れます。
+  - 4000 bps のベース層は、振幅を log2 で 0.2 下げて量子化します。チップもベース層の利得を低めに符号化します。
+  - 4000 bps の上乗せ部分のうち、66〜78 番(分割 VQ)は前半フレームを目標に合成による分析で選びます。38〜49 番(補間と第 2 層)は、変化の最も小さい符号に固定しています。デコーダが当てはめたこれらの符号帳で選んでも、チップで復号すると良くならなかったためです。
+  - デジタル無音(一定の入力)は、チップと同じく b0 = 34(2000 bps は 38)、全帯域無声、利得 0 にします。2400 bps と 2000 bps では、全帯域無声のフレームのピッチも、チップと同じくこの値にします。
+  - 最も低い帯域は、AMBE+2 の 0〜1 kHz の 2 帯域がどちらも有声のときだけ有声にします。0〜500 Hz だけが有声のフレームは声の出だしと終わりに多く、そこではピッチもとても低く推定されがちです。そのまま有声にすると、チップにはない低いうなりが出ていました。
+- 背景雑音モード、トーン、DTMF は AMBE+2 だけです。
+
+### チップとの距離
+
+LibriSpeech と JSUT の 20 発話で、チップのエンコーダの出力をチップで復号した音声との mel スペクトル距離です。どちらのエンコーダの出力もチップで復号しています。
+
+| RATET | このエンコーダ | 参考:チップの出力を ambe2-c で復号 |
+|---|---|---|
+| 34(AMBE+2) | 2.59 dB | 0.60 dB |
+| 31 | 2.89 dB | 1.15 dB |
+| 0、22 | 2.83 dB | 1.21 dB |
+| 17、26 | 3.37 dB | 1.98 dB |
+
+- AMBE+ のレートは、AMBE+2 より 0.2〜0.8 dB 離れています。ピッチの一致(±1)は 81〜85%、有声/無声の一致は 70〜75% です。
+- 日本語の ABX テスト(どちらもチップで復号、6400x4000)では 20/30(p = 0.049)で、わずかに聞き分けられました。手がかりは声の出だしに残る、ごく低いうなりです。それ以外の違いは聞き取れず、実用上の問題はありません。
+- 評価のスクリプトは neural-ambe2 の `ambeplus/eval_enc_rates.py`、聴き比べのテストは `scripts/make_listening_test_enc.py` です。
 
 ## マイコン
 
