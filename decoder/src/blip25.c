@@ -36,10 +36,30 @@ int blip25_decode_bits(blip25_decoder *dec, const uint8_t bits[49], int status, 
     return (int)(uint16_t)disp;
 }
 
+#define AP_NOISE_GAIN 8317 /* Q12 level of the erasure noise: +6.1 dB, the median over test frames (fitted) */
+
+/* AMBE+ stream: from the fourth consecutive erased frame on, the AMBE-3000R plays the last background-noise frame
+ * (pitch code 124) instead of silence, steady and set by that frame alone. Here: that frame decoded on a flat
+ * prediction memory (restored afterwards), with a level fitted to the chip (within about +-4 dB, depending on the
+ * frame's spectral fields) */
 static int decode_ambeplus(blip25_decoder *dec, const uint8_t *serial, int nbits, int status, int16_t rate, int16_t pcm[160]) {
-    int16_t ctrl[26] = {0};
-    int i;
+    int16_t ctrl[26] = {0}, keep[DEC_S_CTRL - DEC_S_PREV_AL8B1];
+    int i, kind = status < 0 ? AP_KIND_ERASURE : ambeplus_frame_kind(serial, rate), noise = 0;
     int16_t disp;
+    if (kind == AP_KIND_NOISE) {
+        memcpy(dec->ap_noise, serial, (size_t)nbits);
+        dec->ap_noise_n = (int16_t)nbits;
+        dec->ap_lost = 0;
+    } else if (kind == AP_KIND_ERASURE) {
+        if (dec->ap_lost < 32767) dec->ap_lost++;
+        if (dec->ap_lost >= 4 && dec->ap_noise_n == nbits) {
+            serial = dec->ap_noise;
+            status = 0;
+            noise = 1;
+        }
+    } else {
+        dec->ap_lost = 0;
+    }
     if (status < 0) {
         ctrl[0x24 / 2] = 15;
         ctrl[0x32 / 2] = 4;
@@ -49,8 +69,19 @@ static int decode_ambeplus(blip25_decoder *dec, const uint8_t *serial, int nbits
     memset(dec->bits, 0, sizeof(dec->bits));
     for (i = 0; i < nbits; i++) dec->bits[i] = (int16_t)(serial[i] & 1);
     b25_dec_ctrl(dec->state, ctrl);
+    if (noise) { /* the substituted noise frame depends on that frame only: flat prediction memory, restored after */
+        memcpy(keep, dec->state + DEC_S_PREV_AL8B1, sizeof(keep));
+        for (i = 0; i < 56; i++) dec->state[DEC_S_PREV_AL8B1 + 8 + i] = 0;
+    }
     disp = b25_dec_synth(pcm, 80, dec->bits, rate, 0, 0, dec->state, &DEC_TABLES);
     b25_dec_synth(pcm + 80, 80, dec->bits, rate, 0, 1, dec->state, &DEC_TABLES);
+    if (noise) {
+        memcpy(dec->state + DEC_S_PREV_AL8B1, keep, sizeof(keep));
+        for (i = 0; i < 160; i++) {
+            int32_t v = ((int32_t)pcm[i] * AP_NOISE_GAIN) >> 12;
+            pcm[i] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+        }
+    }
     return (int)(uint16_t)disp;
 }
 
@@ -68,7 +99,7 @@ int blip25_decode_ambeplus_r0(blip25_decoder *dec, const uint8_t frame[6], int16
     uint8_t s[48];
     unpack_bits(frame, 48, soft);
     ambeplus_fec_decode(soft, 48, 48, 0, s);
-    return blip25_decode_ambeplus2400(dec, s, 0, pcm);
+    return decode_ambeplus(dec, s, 48, 0, B25_RATE_AMBE2400, pcm); /* AMBE-1000 tone frames */
 }
 
 /* RATET 31 (2000 bps): the 2400 bps fields without their least significant bit (b1 complete). Serial position of

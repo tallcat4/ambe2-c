@@ -8,6 +8,7 @@
 #define B25_RATE_AMBEPLUS2400 ((int16_t)0x2400)
 #define B25_RATE_AMBEPLUS2000 ((int16_t)0x2000) /* RATET 31: 2400 bps frame with the dropped LSBs set to 0 */
 #define B25_RATE_AMBEPLUS4000 ((int16_t)0x4000) /* RATET 17 / 26: 80 speech bits */
+#define B25_RATE_AMBE2400 ((int16_t)0x2401)     /* RATET 0: the 2400 bps frame, AMBE-1000 tone frames (DTMF only) */
 
 extern const int16_t AP_GAIN64[64];
 extern const int16_t AP_PRBA24[1536];
@@ -22,6 +23,13 @@ extern const int16_t AP4_L2_SCALE[2];
 extern const int16_t AP4_L2X_VQ[800];
 
 extern const int16_t AP4_INTERP[8];
+
+/* kind of an AMBE+ frame (serial bits, the rate code of b25_decode_frame_ambeplus) */
+#define AP_KIND_VOICE 0
+#define AP_KIND_NOISE 1
+#define AP_KIND_TONE 2
+#define AP_KIND_ERASURE 3
+int ambeplus_frame_kind(const uint8_t *serial, int16_t rate);
 
 int16_t b25_decode_frame_ambeplus(int16_t *cur, int16_t *synth, int16_t *prev, const int16_t *bits, const int16_t *ctrl,
                                   int16_t allow_high, int16_t rate, const int16_t *block_lens, const int16_t *cos_tbl);

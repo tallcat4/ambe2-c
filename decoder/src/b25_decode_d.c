@@ -1138,7 +1138,8 @@ int16_t b25_decode_frame_imbe(int16_t *cur, int16_t *synth, int16_t *prev, int16
 /* 0x1030b870 - decode one frame's payload with whichever codec is active */
 int16_t b25_decode_frame(int16_t *cur, int16_t *synth, int16_t *prev, int16_t *bits, int16_t rate, int16_t voffs, const int16_t *ctrl, int16_t *alloc, int16_t mant, int16_t exp, int16_t allow_high, const b25_frame_tables *t)
 {
-    if (rate == B25_RATE_AMBEPLUS2400 || rate == B25_RATE_AMBEPLUS2000 || rate == B25_RATE_AMBEPLUS4000) {
+    if (rate == B25_RATE_AMBEPLUS2400 || rate == B25_RATE_AMBEPLUS2000 || rate == B25_RATE_AMBEPLUS4000 ||
+        rate == B25_RATE_AMBE2400) {
         return b25_decode_frame_ambeplus(cur, synth, prev, bits, ctrl, allow_high, rate, t->block_lens, t->blob);
     }
     if (alloc[0] == 0) {

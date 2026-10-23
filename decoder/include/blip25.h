@@ -39,6 +39,9 @@ extern "C" {
 typedef struct blip25_decoder {
     int16_t state[0x400]; /* engine state (private) */
     int16_t bits[256];    /* payload scratch (private) */
+    uint8_t ap_noise[80]; /* AMBE+: the last background-noise frame (private) */
+    int16_t ap_noise_n;   /* its length in bits, 0 = none */
+    int16_t ap_lost;      /* AMBE+: consecutive erased frames */
 } blip25_decoder;
 
 /* Power-on state. Call before the first frame and to start a new stream. */

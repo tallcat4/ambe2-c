@@ -9,6 +9,14 @@
  * 2400 bps: codebooks from mbelib (checked against the chip), gain measured on the chip.
  * 2000 bps: the 2400 bps fields without their LSB (b1 complete); pitch and gain sit half way between the two
  *           2400 bps values, the vectors use the even 2400 bps entries.
+ * Pitch codes 120-123 are ordinary (very low pitch) voice frames; 124 a background-noise frame: decoded as a voice
+ * frame with every band unvoiced (V/UV field ignored); blip25.c keeps the last one and plays it from the fourth frame
+ * of an erasure on instead of silence (until the next reset); 125 and 127 erasures (the engine repeats the last frame
+ * three times, then mutes, as the chip); 126 a tone frame:
+ *   AMBE-2000 rates (31, 22, 17, 26): tone index I (8 bits; the top three via a 3-bit permutation) and amplitude A
+ *     (8 bits); I = 5..122 a single tone at 31.25 I Hz, 128..143 DTMF, 144..147 the four call-progress tones, other
+ *     indices an erasure; level 0.354 dB per step of A (the AMBE+2 tone synthesis of the engine).
+ *   RATET 0 (AMBE-1000 tone format): always DTMF, column bits 6-7, row bits 8-9, A = bits 10-17 at 24 dB / 256 steps.
  * 4000 bps: PRBA and gain books shared with 2400 bps, own 5-bit HOC books (fitted to the chip), six-band voicing,
  *           L up to ~3780 Hz, plus refinements that stay out of the prediction memory (cf. US 6,377,916):
  *           first-half-frame interpolation weights (bits 38-39) and a second quantization layer (bits 40-49: a gain
@@ -31,6 +39,7 @@ typedef struct {
 
 typedef struct {
     ap_field b0, b1, b2, b3, b4, hoc[4];
+    uint8_t tone_id[5], tone_amp[8]; /* tone frames: index bits t4..t0 (t7..t5 from bits 6-8), amplitude MSB first */
     int vuv6;              /* b1 = six band flags (else an index into AP_VOICING) */
     int half_step;         /* b0, b2 stand for two 2400 bps values (2000 bps) */
     const int16_t *gain;   /* 1 << b2.n entries (half_step: the 2400 bps book) */
@@ -44,6 +53,7 @@ static const ap_layout L2400 = {
     {7, {0, 1, 2, 3, 4, 5, 47}}, {4, {37, 38, 39, 40}}, {6, {6, 7, 8, 9, 41, 42}},
     {9, {10, 11, 12, 13, 14, 15, 16, 43, 44}}, {7, {17, 18, 19, 20, 21, 45, 46}},
     {{4, {22, 23, 24, 25}}, {4, {26, 27, 28, 29}}, {4, {30, 31, 32, 33}}, {3, {34, 35, 36}}},
+    {9, 41, 42, 10, 11}, {12, 13, 14, 15, 16, 43, 44, 17},
     0, 0, AP_GAIN64, AP_PRBA24, AP_PRBA58, AP_HOC, 16, 4};
 
 /* 2000 bps frames are first spread into the 2400 bps layout (blip25.c), dropped LSBs 0 */
@@ -51,12 +61,14 @@ static const ap_layout L2000 = {
     {7, {0, 1, 2, 3, 4, 5, 47}}, {4, {37, 38, 39, 40}}, {6, {6, 7, 8, 9, 41, 42}},
     {9, {10, 11, 12, 13, 14, 15, 16, 43, 44}}, {7, {17, 18, 19, 20, 21, 45, 46}},
     {{4, {22, 23, 24, 25}}, {4, {26, 27, 28, 29}}, {4, {30, 31, 32, 33}}, {3, {34, 35, 36}}},
+    {9, 41, 10, 11, 12}, {13, 14, 15, 16, 43, 17, 18, 19}, /* 2000 bps tone layout, in the spread 2400 bps frame */
     0, 1, AP_GAIN64, AP_PRBA24, AP_PRBA58, AP_HOC, 16, 4};
 
 static const ap_layout L4000 = {
     {7, {0, 1, 2, 3, 4, 5, 79}}, {6, {50, 51, 52, 53, 54, 55}}, {6, {6, 7, 8, 9, 56, 57}},
     {9, {10, 11, 12, 13, 14, 15, 16, 58, 59}}, {7, {17, 18, 19, 20, 21, 60, 61}},
     {{5, {22, 23, 24, 25, 62}}, {5, {26, 27, 28, 29, 63}}, {5, {30, 31, 32, 33, 64}}, {5, {34, 35, 36, 37, 65}}},
+    {9, 56, 57, 10, 11}, {12, 13, 14, 15, 16, 58, 59, 17},
     1, 0, AP_GAIN64, AP_PRBA24, AP_PRBA58, AP4_HOC, 32, 5};
 
 
@@ -225,6 +237,59 @@ static void ap_code_amplitudes(const ap_layout *lay, const int16_t *prev, int16_
     b25_avg_and_extend(cur + 8, pred, l);
 }
 
+/* tone level in the engine's units from r = 2 * (AMBE+2 tone amplitude) - 17, one step of r = 0.348 dB
+ * (blip25: (r * 0x78f2) >> 8) */
+static int16_t tone_level(int32_t r) { return (int16_t)(w32_mul(r, 0x0078f200) >> 16); }
+
+/* AMBE+ tone amplitude: 0.354 dB per step of A = 260/256 steps of r; A = 0 at the chip's -86.8 dBFS (single tone,
+ * rms; 128 -> -41.5). RATET 0 DTMF: component level -32.5 dBFS + 24 dB * A / 256 = r(-32.5 dBFS) + 69/256 per A. */
+#define AP_TONE_R0 (-3)
+#define AP_TONE_A_NUM 260
+#define AP_TONE_R0_DTMF (AP_TONE_R0 + 156)
+#define AP_TONE_DTMF_NUM 69
+
+/* b0 = 126: tone frame -> engine tone parameters (0), or an erasure (4) */
+static int16_t ap_tone(const ap_layout *lay, int dtmf_only, const int16_t *s, int16_t *cur, int16_t *synth,
+                       const int16_t *tbl) {
+    static const uint8_t DEF[8] = {4, 0, 1, 2, 3, 7, 6, 5}; /* serial bits 6-8 -> index bits 7-5 */
+    /* AMBE+ DTMF index 128 + 4 column + row (1 4 7 * 2 5 8 0 3 6 9 # A B C D) -> the engine's (AMBE+2) index */
+    static const uint8_t AP_DTMF[16] = {129, 132, 135, 142, 130, 133, 136, 128, 131, 134, 137, 143, 138, 139, 140, 141};
+    int id, a = 0, k;
+    int32_t r;
+    if (dtmf_only) { /* AMBE-1000: 16 DTMF tones; component level -32.5 + 24 A / 256 dB */
+        id = AP_DTMF[4 * (2 * (s[6] & 1) + (s[7] & 1)) + 2 * (s[8] & 1) + (s[9] & 1)];
+        for (k = 10; k <= 17; k++) a = (a << 1) | (s[k] & 1);
+        r = AP_TONE_R0_DTMF + (a * AP_TONE_DTMF_NUM) / 256;
+    } else {
+        id = DEF[4 * (s[6] & 1) + 2 * (s[7] & 1) + (s[8] & 1)] << 5;
+        for (k = 0; k < 5; k++) id |= (s[lay->tone_id[k]] & 1) << (4 - k);
+        for (k = 0; k < 8; k++) a = (a << 1) | (s[lay->tone_amp[k]] & 1);
+        if (id >= 144 && id <= 147) id += 16; /* call-progress tones: AMBE+2 indices 160-163 */
+        else if (!((id >= 5 && id <= 122) || (id >= 128 && id <= 143))) return 4;
+        else if (id >= 128) id = AP_DTMF[id - 128];
+        r = AP_TONE_R0 + (a * AP_TONE_A_NUM) / 256;
+    }
+    if (b25_pitch_config_init(cur, (int16_t)id, tone_level(r), tone_level(r), 0, tbl) != 0) return 4;
+    b25_copy_params_l1_batch3(synth, cur);
+    return 0;
+}
+
+int ambeplus_frame_kind(const uint8_t *serial, int16_t rate) {
+    const ap_layout *lay = rate == B25_RATE_AMBEPLUS4000 ? &L4000 : rate == B25_RATE_AMBEPLUS2000 ? &L2000 : &L2400;
+    static const uint8_t DEF[8] = {4, 0, 1, 2, 3, 7, 6, 5};
+    int16_t s[80];
+    int i, b0, id, k;
+    for (i = 0; i < (lay == &L4000 ? 80 : 48); i++) s[i] = serial[i] & 1;
+    b0 = field(s, &lay->b0);
+    if (b0 == 124) return AP_KIND_NOISE;
+    if (b0 == 125 || b0 == 127) return AP_KIND_ERASURE;
+    if (b0 != 126) return AP_KIND_VOICE;
+    if (rate == B25_RATE_AMBE2400) return AP_KIND_TONE; /* AMBE-1000 tones: DTMF only, always valid */
+    id = DEF[4 * s[6] + 2 * s[7] + s[8]] << 5;
+    for (k = 0; k < 5; k++) id |= s[lay->tone_id[k]] << (4 - k);
+    return (id >= 5 && id <= 122) || (id >= 128 && id <= 147) ? AP_KIND_TONE : AP_KIND_ERASURE;
+}
+
 int16_t b25_decode_frame_ambeplus(int16_t *cur, int16_t *synth, int16_t *prev, const int16_t *s, const int16_t *ctrl,
                                   int16_t allow_high, int16_t rate, const int16_t *block_lens, const int16_t *cos_tbl) {
     const ap_layout *lay = rate == B25_RATE_AMBEPLUS4000 ? &L4000 : rate == B25_RATE_AMBEPLUS2000 ? &L2000 : &L2400;
@@ -235,16 +300,26 @@ int16_t b25_decode_frame_ambeplus(int16_t *cur, int16_t *synth, int16_t *prev, c
     int16_t gain;
     int16_t log_pitch;
 
-    if (b0 >= 124) { /* tone / silence / erasure codes: not handled yet */
+    if (b0 == 125 || b0 == 127) { /* erasure (2000 bps codes are even: 124 voice, 126 tone) */
         prev[DEC_S_TRACK] = -3;
         return 4;
+    }
+    if (b0 == 126) {
+        int16_t st = ap_tone(lay, rate == B25_RATE_AMBE2400, s, cur, synth, cos_tbl);
+        if (st == 0) {
+            b25_select_repeat_params(synth, cur, prev);
+            b25_copy_params_batch2(prev, cur, 0);
+        }
+        prev[DEC_S_TRACK] = -3;
+        return st;
     }
     synth[DEC_P_CLASS] = 1;
     cur[DEC_P_CLASS] = 1;
     synth[DEC_P_TAG] = 0xff;
     cur[DEC_P_TAG] = 0xff;
 
-    b25_expand_dibits(&m_synth, &m_cur, lay->vuv6 ? vuv6_pattern(b1) : AP_VOICING[b1]);
+    /* background noise (b0 = 124): every band unvoiced */
+    b25_expand_dibits(&m_synth, &m_cur, b0 == 124 ? 0 : lay->vuv6 ? vuv6_pattern(b1) : AP_VOICING[b1]);
     b25_put32_al4b1(synth, DEC_P_VOICE, m_synth);
     b25_put32_al4b1(cur, DEC_P_VOICE, m_cur);
 
