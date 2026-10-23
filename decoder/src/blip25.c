@@ -144,11 +144,33 @@ int blip25_fec_ambeplus_r26_soft(const int8_t llr[128], uint8_t speech[80]) {
     return ambeplus_fec_decode(soft, 128, 80, 36, speech);
 }
 
-int blip25_decode_ambeplus_r26(blip25_decoder *dec, const uint8_t frame[16], int16_t pcm[160], int *errors) {
+/* RATET 26 from the decoder's 128-entry channel buffer (the AMBE-3000R keeps one: a packet overwrites only as
+ * many entries as it carries) */
+static int decode_r26_chan(blip25_decoder *dec, int16_t pcm[160], int *errors) {
     uint8_t s[80];
-    int e = blip25_fec_ambeplus_r26(frame, s);
+    int e = blip25_fec_ambeplus_r26_soft(dec->ap_chan, s);
     if (errors) *errors = e;
     return decode_ambeplus(dec, s, 80, 0, B25_RATE_AMBEPLUS4000, pcm);
+}
+
+int blip25_decode_ambeplus_r26(blip25_decoder *dec, const uint8_t frame[16], int16_t pcm[160], int *errors) {
+    return blip25_decode_ambeplus_r26_chand(dec, frame, 128, pcm, errors);
+}
+
+int blip25_decode_ambeplus_r26_chand(blip25_decoder *dec, const uint8_t *data, int nbits, int16_t pcm[160],
+                                     int *errors) {
+    int i;
+    if (nbits < 1 || nbits > 255) return -1;
+    for (i = 0; i < nbits && i < 128; i++) dec->ap_chan[i] = ((data[i >> 3] >> (7 - (i & 7))) & 1) ? 15 : -15;
+    return decode_r26_chan(dec, pcm, errors);
+}
+
+int blip25_decode_ambeplus_r26_chand4(blip25_decoder *dec, const uint8_t *data, int nbits, int16_t pcm[160],
+                                      int *errors) {
+    int i;
+    if (nbits < 1 || nbits > 255) return -1;
+    for (i = 0; i < nbits && i < 128; i++) dec->ap_chan[i] = (int8_t)(2 * ((data[i >> 1] >> (i & 1 ? 0 : 4)) & 15) - 15);
+    return decode_r26_chan(dec, pcm, errors);
 }
 
 int blip25_fec_ambeplus_r22(const uint8_t frame[10], uint8_t speech[48]) {

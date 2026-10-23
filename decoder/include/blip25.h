@@ -42,6 +42,7 @@ typedef struct blip25_decoder {
     uint8_t ap_noise[80]; /* AMBE+: the last background-noise frame (private) */
     int16_t ap_noise_n;   /* its length in bits, 0 = none */
     int16_t ap_lost;      /* AMBE+: consecutive erased frames */
+    int8_t ap_chan[128];  /* AMBE+ RATET 26: the channel buffer (soft decisions, private) */
 } blip25_decoder;
 
 /* Power-on state. Call before the first frame and to start a new stream. */
@@ -59,6 +60,16 @@ int blip25_decode_ambeplus_r31(blip25_decoder *dec, const uint8_t frame[5], int1
 int blip25_decode_ambeplus4000(blip25_decoder *dec, const uint8_t serial[80], int status, int16_t pcm[160]);
 int blip25_decode_ambeplus_r17(blip25_decoder *dec, const uint8_t frame[10], int16_t pcm[160]);
 int blip25_decode_ambeplus_r26(blip25_decoder *dec, const uint8_t frame[16], int16_t pcm[160], int *errors);
+/* RATET 26 channel packets with an explicit bit count, as the AMBE-3000R takes them in a CHAND (hard, MSB first) or
+ * CHAND4 (4-bit soft decisions 0 = surest 0 .. 15 = surest 1, two per byte, first bit in the high nibble) field. The
+ * rate is never inferred from nbits: the packet overwrites the first min(nbits, 128) entries of a 128-bit channel
+ * buffer, the rest keeps what earlier packets left there (bits past 128 are ignored), and the buffer is decoded as a
+ * 4000 + 2400 frame. A short packet thus decodes against stale FEC bits, exactly as on the chip. nbits: 1..255
+ * (the chip's documented range is 40..192); -1 if outside. blip25_decode_ambeplus_r26 is the nbits = 128 case. */
+int blip25_decode_ambeplus_r26_chand(blip25_decoder *dec, const uint8_t *data, int nbits, int16_t pcm[160],
+                                     int *errors);
+int blip25_decode_ambeplus_r26_chand4(blip25_decoder *dec, const uint8_t *data, int nbits, int16_t pcm[160],
+                                      int *errors);
 int blip25_fec_ambeplus_r26(const uint8_t frame[16], uint8_t speech[80]);
 int blip25_fec_ambeplus_r26_soft(const int8_t llr[128], uint8_t speech[80]);
 int blip25_fec_ambeplus_r22(const uint8_t frame[10], uint8_t speech[48]);

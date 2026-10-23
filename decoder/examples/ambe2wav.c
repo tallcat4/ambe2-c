@@ -3,7 +3,10 @@
  *   default   7-byte frames in rate-34 (ThumbDV) order (what ambe-enc's wav2ambe writes)
  *   --ambe-d  7-byte frames in ambe_d (mbelib / DSD .amb) order
  *   --rate N  frames of AMBE-3000R RATET N, MSB first: 34 (7 bytes), 33 (9, what wav2ambe --fec writes), and the
- *             AMBE+ rates 31 (5), 0 (6), 22 (10), 17 (10), 26 (16). --rate33 is the same as --rate 33. */
+ *             AMBE+ rates 31 (5), 0 (6), 22 (10), 17 (10), 26 (16). --rate33 is the same as --rate 33.
+ *   --rate 26 --chand  AMBE-3000R channel-packet fields instead of fixed frames: field id (0x01 CHAND, packed bits,
+ *             or 0x17 CHAND4, 4-bit soft decisions), bit count, data. Any bit count is decoded as the chip does
+ *             (blip25_decode_ambeplus_r26_chand). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,24 +29,34 @@ static int frame_bytes(int rate) {
 
 int main(int argc, char **argv) {
     FILE *f, *o;
-    unsigned char fr[16], h[44];
+    unsigned char fr[128], h[44];
     int16_t pcm[160];
     long frames = 0, errors = 0;
     int ambe_d = argc > 3 && !strcmp(argv[3], "--ambe-d");
     int rate = argc > 3 && !strcmp(argv[3], "--rate33") ? 33 : argc > 4 && !strcmp(argv[3], "--rate") ? atoi(argv[4]) : 34;
     int nb = frame_bytes(rate);
+    int chand = rate == 26 && argc > 5 && !strcmp(argv[5], "--chand");
     blip25_decoder dec;
     if (argc < 3 || !nb) {
-        fprintf(stderr, "usage: ambe2wav in.ambe out.wav [--ambe-d | --rate 34|33|31|0|22|17|26]\n");
+        fprintf(stderr, "usage: ambe2wav in.ambe out.wav [--ambe-d | --rate 34|33|31|0|22|17|26 [--chand]]\n");
         return 2;
     }
     if (!(f = fopen(argv[1], "rb"))) { perror(argv[1]); return 1; }
     if (!(o = fopen(argv[2], "wb"))) { perror(argv[2]); return 1; }
     fwrite(h, 1, 44, o);   /* header written at the end */
     blip25_init(&dec);
-    while (fread(fr, 1, (size_t)nb, f) == (size_t)nb) {
+    for (;;) {
         int i, e = 0;
-        if (ambe_d) blip25_decode_2450(&dec, fr, pcm);
+        if (chand) {
+            unsigned char hd[2];
+            size_t len;
+            if (fread(hd, 1, 2, f) != 2) break;
+            len = hd[0] == 0x17 ? (hd[1] + 1u) / 2 : (hd[1] + 7u) / 8;
+            if ((hd[0] != 0x01 && hd[0] != 0x17) || fread(fr, 1, len, f) != len) break;
+            if (hd[0] == 0x17) blip25_decode_ambeplus_r26_chand4(&dec, fr, hd[1], pcm, &e);
+            else blip25_decode_ambeplus_r26_chand(&dec, fr, hd[1], pcm, &e);
+        } else if (fread(fr, 1, (size_t)nb, f) != (size_t)nb) break;
+        else if (ambe_d) blip25_decode_2450(&dec, fr, pcm);
         else if (rate == 34) blip25_decode_2450_thumbdv(&dec, fr, pcm);
         else if (rate == 33) blip25_decode_3600(&dec, fr, pcm, &e);
         else if (rate == 31) blip25_decode_ambeplus_r31(&dec, fr, pcm);

@@ -51,6 +51,7 @@ encoder/wav2ambe in.wav out.ambe                 # 8 kHz・モノラルの WAV �
 encoder/wav2ambe in.wav out.ambe --fec           # FEC 付きの 9 バイト/20 ms のフレーム列(RATET 33)
 decoder/ambe2wav out.ambe out.wav                # RATET 34 のフレーム列 → WAV
 decoder/ambe2wav in.ambe out.wav --rate 26       # ほかのレート: 34、33、31、0、22、17、26(--rate33 は --rate 33 と同じ)
+decoder/ambe2wav in.bin out.wav --rate 26 --chand  # RATET 26 のチャネルパケット(CHAND / CHAND4、任意のビット数)
 ```
 
 - [エンコーダ](docs/encoder.md)

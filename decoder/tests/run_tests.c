@@ -114,6 +114,17 @@ static unsigned long long run(const char *test, const char *v) {
             for (i = 0; i < K; i++) p[i >> 3] |= (unsigned char)(sp[i] << (7 - (i & 7)));
             fnv_bytes(&f, p, (size_t)(K / 8));
         }
+    } else if (!strcmp(test, "apchand")) {   /* RATET 26 packets with explicit bit counts: field, nbits, data */
+        size_t at = 0;
+        fr = slurp(v, ".bin", &n);
+        while (at + 2 <= (size_t)n) {
+            int nbits = fr[at + 1], soft = fr[at] == 0x17;
+            const unsigned char *x = fr + at + 2;
+            if (soft) blip25_decode_ambeplus_r26_chand4(&dec, x, nbits, pcm, NULL);
+            else blip25_decode_ambeplus_r26_chand(&dec, x, nbits, pcm, NULL);
+            fnv_pcm(&f, pcm, 160);
+            at += 2 + (size_t)(soft ? (nbits + 1) / 2 : (nbits + 7) / 8);
+        }
     } else if (!strncmp(test, "apdec", 5)) {   /* AMBE+ decode: apdec<RATET> */
         int rate = atoi(test + 5);
         int nb = rate == 31 ? 5 : rate == 0 ? 6 : rate == 26 ? 16 : 10;
