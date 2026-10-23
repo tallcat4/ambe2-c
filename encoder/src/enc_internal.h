@@ -47,5 +47,6 @@ void voicing_frame(const frame_an *a, int b0, real *x, real *raw);
 int voicing_classify(const real rows[4][VF]);
 void harmonic_amplitudes(const real *P, real w0, int L, const real *v, real *y);
 void band_of_harmonics(real f0, int L, int *band);
+void amp_spectrum(const real *x, int center, real *P);
 
 #endif

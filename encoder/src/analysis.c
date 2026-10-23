@@ -22,6 +22,9 @@ static void windowed_power(const real *x, const real *w, int n, real *P) {
     fft_power(seg, n, P);
 }
 
+/* the amplitude spectrum (window T_AMP_WINDOW) centred `center` samples from the frame start x */
+void amp_spectrum(const real *x, int center, real *P) { windowed_power(x + center - 200, T_AMP_WINDOW, 400, P); }
+
 /* comb features of one spectrum for every candidate: energy share on the harmonic comb, comb log rise */
 static void comb(const real *P, const real *lg, int k, real C[NCAND][NCF]) {
     real sumP = 0, meanL = 0;

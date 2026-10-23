@@ -24,6 +24,7 @@ struct ambe_encoder {
     int32_t lvl_hist[51];
     int nlvl;
     int32_t band_prev[16];
+    int rate33;               /* ambe_enc_set_rate(33): 3600x2450 frames */
 };
 
 unsigned long ambe_enc_size(void) { return (unsigned long)sizeof(ambe_encoder); }
@@ -36,6 +37,21 @@ ambe_encoder *ambe_enc_init(void *mem) {
 }
 
 void ambe_enc_set_background(ambe_encoder *e, int on) { e->bg_on = on != 0; }
+
+/* the fixed-point version has the AMBE+2 rates only */
+int ambe_enc_set_rate(ambe_encoder *e, int ratet) {
+    if (ratet != 34 && ratet != 33) return 0;
+    e->rate33 = ratet == 33;
+    return e->rate33 ? 9 : 7;
+}
+
+/* a rate-34 frame in out[0..7) -> the frame of the selected rate */
+static void to_rate(const ambe_encoder *e, uint8_t *out) {
+    uint8_t fr[7];
+    if (!e->rate33) return;
+    memcpy(fr, out, 7);
+    ambe_enc_to_rate33(fr, out);
+}
 
 static int32_t floored(const ambe_encoder *e, int i, int32_t raw) {
     return e->have_floor && e->floor[i] + FX_FLOOR_RISE < raw ? e->floor[i] + FX_FLOOR_RISE : raw;
@@ -171,7 +187,7 @@ static int argmin(const int32_t *x, int n) {
     return b;
 }
 
-int ambe_enc_push(ambe_encoder *e, const int16_t pcm[160], uint8_t out[7]) {
+int ambe_enc_push(ambe_encoder *e, const int16_t pcm[160], uint8_t *out) {
     int32_t S[NCAND], f[NCAND], m, x[VF], raw[9], row[VF], next[VF], r[4][VF];
     int arg[NCAND], j, b0, prov, b1;
     memmove(e->hist, e->hist + N, (HIST - N) * sizeof(int16_t));
@@ -213,11 +229,12 @@ int ambe_enc_push(ambe_encoder *e, const int16_t pcm[160], uint8_t out[7]) {
     FX_PROF(FXP_CLASSIFY);
     e->prov = prov;
     if (!background(e, &e->an[0], (const int32_t(*)[VF])r, out)) finish(e, &e->an[0], b0, b1, out);
+    to_rate(e, out);
     FX_PROF(FXP_QUANT);
     return 1;
 }
 
-int ambe_enc_flush(ambe_encoder *e, uint8_t out[7]) {
+int ambe_enc_flush(ambe_encoder *e, uint8_t *out) {
     int32_t row[VF], r[4][VF];
     int b1;
     if (e->t == 0) return 0;
@@ -227,6 +244,7 @@ int ambe_enc_flush(ambe_encoder *e, uint8_t out[7]) {
     context(e, row, r);
     b1 = fx_voicing_classify((const int32_t(*)[VF])r);
     if (!background(e, &e->an[1], (const int32_t(*)[VF])r, out)) finish(e, &e->an[1], e->prov, b1, out);
+    to_rate(e, out);
     e->t = 0;
     return 1;
 }
